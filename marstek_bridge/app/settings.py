@@ -67,6 +67,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
     },
     "logging": {
         "log_level": "info",
+        "log_full_line_color": True,
     },
 }
 

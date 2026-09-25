@@ -48,14 +48,39 @@ NAME_COLOR = "\033[38;5;110m"
 
 
 class AnsiFormatter(logging.Formatter):
-    """Formatter, der Zeit, Level und Logger-Namen einfaerbt."""
+    """Faerbt die Logzeile nach Level.
+
+    ``full_line=True`` faerbt die komplette Zeile inklusive Zeitstempel und
+    Logger-Name in der Levelfarbe. ``full_line=False`` faerbt nur Zeitstempel,
+    Level und Namen als Akzente und laesst den Text neutral.
+    """
+
+    def __init__(self, full_line: bool = True) -> None:
+        super().__init__()
+        self.full_line = full_line
 
     def format(self, record: logging.LogRecord) -> str:
         color = LEVEL_COLORS.get(record.levelno, "")
         ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        msg = record.getMessage()
+
+        if self.full_line:
+            # Eingebettete Farbsequenzen (z. B. fett hervorgehobene Namen)
+            # beenden mit RESET - danach die Levelfarbe wieder aufnehmen,
+            # damit der Rest der Zeile nicht farblos wird.
+            msg = msg.replace(RESET, RESET + color)
+            body = (
+                f"{ts} {BOLD}{record.levelname:<8}{RESET}{color} "
+                f"{record.name:<22} {msg}"
+            )
+            if record.exc_info:
+                body += "\n" + self.formatException(record.exc_info).replace(
+                    RESET, RESET + color
+                )
+            return f"{color}{body}{RESET}"
+
         level = f"{color}{BOLD}{record.levelname:<8}{RESET}"
         name = f"{NAME_COLOR}{record.name:<22}{RESET}"
-        msg = record.getMessage()
         if record.levelno >= logging.WARNING:
             msg = f"{color}{msg}{RESET}"
         elif record.levelno <= TRACE_LEVEL:
@@ -66,12 +91,12 @@ class AnsiFormatter(logging.Formatter):
         return line
 
 
-def setup_logging(level_name: str) -> logging.Logger:
+def setup_logging(level_name: str, full_line_color: bool = True) -> logging.Logger:
     """Root-Logger konfigurieren und den Bridge-Logger zurueckgeben."""
     level = LEVELS.get(str(level_name).lower(), logging.INFO)
 
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(AnsiFormatter())
+    handler.setFormatter(AnsiFormatter(full_line=full_line_color))
 
     root = logging.getLogger()
     root.handlers.clear()

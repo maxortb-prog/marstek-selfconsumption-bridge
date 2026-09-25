@@ -14,7 +14,7 @@ from .settings import load_settings
 
 def main() -> int:
     settings = load_settings()
-    log = setup_logging(settings.log_level)
+    log = setup_logging(settings.log_level, settings.log_full_line_color)
     log.debug("Log-Level: %s", settings.log_level)
 
     health = HealthState()

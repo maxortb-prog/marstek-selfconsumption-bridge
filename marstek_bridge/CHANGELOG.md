@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.7 - 2026-09-25
+
+- Die komplette Logzeile wird jetzt in der Farbe ihres Levels ausgegeben,
+  inklusive Zeitstempel und Logger-Name. Hervorhebungen innerhalb einer
+  Meldung bleiben erhalten.
+- Neue Option `log_full_line_color` in der Gruppe `logging`, um auf die
+  bisherige Darstellung (nur farbige Akzente) zurueckzuschalten.
+
 ## 0.0.6 - 2026-09-25
 
 **Achtung: geaenderte Konfigurationsstruktur.** Nach dem Update einmal die

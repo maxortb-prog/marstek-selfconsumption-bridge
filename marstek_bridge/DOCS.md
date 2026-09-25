@@ -88,7 +88,8 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen, bis `/health` 503 liefert (verhindert Neustart-Schleifen bei kurzen Aussetzern). |
 | `persist_device_info` | `true` | `device_ble_mac`/`device_type` in die Add-on-Optionen zurückschreiben. |
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
-| `log_level` | `info` | `trace` \| `debug` \| `info` \| `warning` \| `error`. `trace` loggt jedes UDP- und MQTT-Paket. Alle Level werden farbig (ANSI) ausgegeben. |
+| `log_level` | `info` | `trace` \| `debug` \| `info` \| `warning` \| `error`. `trace` loggt jedes UDP- und MQTT-Paket. |
+| `log_full_line_color` | `true` | Ein: die komplette Zeile erscheint in der Levelfarbe (grau/cyan/grün/gelb/rot). Aus: nur Zeitstempel, Level und Logger-Name sind farbige Akzente. |
 
 ## MQTT-Topics
 

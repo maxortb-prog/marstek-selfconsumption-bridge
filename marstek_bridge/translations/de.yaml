@@ -82,7 +82,9 @@ configuration:
     name: Protokollierung
     description: >-
       log_level: trace protokolliert jedes einzelne UDP- und MQTT-Paket, debug
-      jeden Abfrageschritt, info nur den normalen Ablauf. Alle Level werden
-      farbig ausgegeben.
+      jeden Abfrageschritt, info nur den normalen Ablauf.
+      log_full_line_color: ein = die komplette Zeile wird in der Farbe des
+      Levels ausgegeben. Aus = nur Zeitstempel, Level und Logger-Name werden
+      als Akzente gefärbt, der Meldungstext bleibt neutral.
 network:
   8099/tcp: Health-Endpoint für den Supervisor-Watchdog

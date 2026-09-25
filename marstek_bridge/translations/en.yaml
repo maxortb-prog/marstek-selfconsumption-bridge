@@ -80,6 +80,9 @@ configuration:
     name: Logging
     description: >-
       log_level: trace logs every single UDP and MQTT packet, debug every query
-      step, info only the normal flow. All levels are printed in colour.
+      step, info only the normal flow.
+      log_full_line_color: on = the whole line is printed in the colour of its
+      level. Off = only timestamp, level and logger name are coloured as
+      accents, the message text stays neutral.
 network:
   8099/tcp: Health endpoint for the Supervisor watchdog
