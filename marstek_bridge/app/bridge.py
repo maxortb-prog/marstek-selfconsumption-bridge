@@ -215,6 +215,12 @@ class Bridge:
             f"{base}/{GRP_ENERGY_CONTROL}/passive_cd_time/set",
             f"{base}/{GRP_ENERGY_CONTROL}/apply/set",
             f"{base}/{GRP_ENERGY_CONTROL}/refresh/set",
+            # Eigener Refresh-Button je Statusgruppe
+            f"{base}/{GRP_BATTERY}/refresh/set",
+            f"{base}/{GRP_PV}/refresh/set",
+            f"{base}/{GRP_ENERGY_STATUS}/refresh/set",
+            f"{base}/{GRP_ENERGY_MODE}/refresh/set",
+            f"{base}/{GRP_ENERGY_METER}/refresh/set",
         ):
             self.mqtt.subscribe(topic)
 
@@ -504,8 +510,27 @@ class Bridge:
             self._apply_mode()
         elif suffix == f"{GRP_ENERGY_CONTROL}/refresh/set":
             self._poll()
+        elif suffix in self._group_refresh_steps():
+            self._refresh_group(suffix)
         else:
             _LOGGER.debug("Unbehandeltes Topic: %s", topic)
+
+    def _group_refresh_steps(self) -> dict[str, Callable[[], bool]]:
+        """Topic-Suffix -> Abfrage, die der jeweilige Refresh-Button ausloest."""
+        return {
+            f"{GRP_BATTERY}/refresh/set": self._step_battery,
+            f"{GRP_PV}/refresh/set": self._step_pv,
+            f"{GRP_ENERGY_STATUS}/refresh/set": self._step_es_status,
+            f"{GRP_ENERGY_MODE}/refresh/set": self._step_es_mode,
+            f"{GRP_ENERGY_METER}/refresh/set": self._step_em,
+        }
+
+    def _refresh_group(self, suffix: str) -> None:
+        step = self._group_refresh_steps()[suffix]
+        group = suffix.split("/", 1)[0]
+        _LOGGER.info("Manuelle Abfrage: %s", GROUP_TITLES[group])
+        if step():
+            self._set_communication(True)
 
     # =================================================================
     # Hauptschleife / Polling

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.5 - 2026-09-25
+
+- Eigener Refresh-Button je Statusgruppe: *Marstek Battery*, *Marstek PV
+  Status*, *Marstek Energy Status*, *Marstek Energy Mode* und (wenn aktiviert)
+  *Marstek Energy Meter*. Der Button schickt genau die Abfrage dieser Gruppe
+  erneut an das Geraet.
+
 ## 0.0.4 - 2026-09-25
 
 - `ble_block_payload_invert` entfernt. `Ble.Adv` sendet fest `enable: 0` zum

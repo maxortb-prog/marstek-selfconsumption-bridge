@@ -51,6 +51,18 @@ class Ent:
         return tpl(self.key)
 
 
+def refresh_button(label: str) -> Ent:
+    """Button, der genau diese Statusabfrage erneut an das Geraet schickt."""
+    return Ent(
+        "refresh",
+        f"Refresh {label}",
+        component="button",
+        icon="mdi:refresh",
+        command_suffix="refresh",
+        extra={"payload_press": "PRESS"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Marstek System  (Marstek.GetDevice / Wifi.GetStatus / BLE.GetStatus
 #                  + DOD / Ble_block / Led_Ctrl + Kommunikationsstatus)
@@ -165,6 +177,7 @@ BATTERY_ENTITIES: list[Ent] = [
         component="binary_sensor",
         icon="mdi:battery-minus-outline",
     ),
+    refresh_button("battery status"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -228,6 +241,7 @@ def build_pv_entities(sample: dict[str, Any]) -> list[Ent]:
             )
         else:
             ents.append(Ent(key, label, category=DIAG))
+    ents.append(refresh_button("PV status"))
     return ents
 
 
@@ -282,6 +296,7 @@ ENERGY_STATUS_ENTITIES: list[Ent] = [
         unit="Wh",
         state_class="total_increasing",
     ),
+    refresh_button("energy status"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -320,6 +335,7 @@ ENERGY_MODE_ENTITIES: list[Ent] = [
         unit="Wh",
         state_class="total_increasing",
     ),
+    refresh_button("energy mode"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -354,6 +370,7 @@ ENERGY_METER_ENTITIES: list[Ent] = [
         unit="Wh",
         state_class="total_increasing",
     ),
+    refresh_button("energy meter"),
 ]
 
 

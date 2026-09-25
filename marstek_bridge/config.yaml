@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.4"
+version: "0.0.5"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek

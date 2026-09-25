@@ -97,7 +97,12 @@ Marstek-Bridge-Control/energy_control/mode/set            Auto|AI|Passive|UPS
 Marstek-Bridge-Control/energy_control/passive_power/set   W
 Marstek-Bridge-Control/energy_control/passive_cd_time/set s
 Marstek-Bridge-Control/energy_control/apply/set           PRESS
-Marstek-Bridge-Control/energy_control/refresh/set         PRESS
+Marstek-Bridge-Control/energy_control/refresh/set         PRESS  (alle Gruppen)
+Marstek-Bridge-Control/battery/refresh/set                PRESS  (nur Bat.GetStatus)
+Marstek-Bridge-Control/pv/refresh/set                     PRESS  (nur PV.GetStatus)
+Marstek-Bridge-Control/energy_status/refresh/set          PRESS  (nur ES.GetStatus)
+Marstek-Bridge-Control/energy_mode/refresh/set            PRESS  (nur ES.GetMode)
+Marstek-Bridge-Control/energy_meter/refresh/set           PRESS  (nur EM.GetStatus)
 ```
 
 ## Hinweise
