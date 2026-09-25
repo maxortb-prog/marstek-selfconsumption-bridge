@@ -14,7 +14,7 @@ Betriebsmodi (`Auto`, `AI`, `Passive`, `UPS`) fuer die Eigenverbrauchsregelung.
 
 1. **Einstellungen → Add-ons → Add-on Store → ⋮ → Repositories**
 2. URL dieses Repos eintragen:
-   `https://github.com/<YOUR-GITHUB-USER>/marstek-selfconsumption-bridge`
+   `https://github.com/maxortb-prog/marstek-selfconsumption-bridge`
 3. Add-on **„Marstek Self-consumption Bridge"** installieren.
 4. Auf dem Speicher muss die Open API in der Marstek-App aktiviert und der
    UDP-Port gesetzt sein (Default 30000, empfohlen 49152-65535).

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.0.4 - 2026-09-25
+
+- `ble_block_payload_invert` entfernt. `Ble.Adv` sendet fest `enable: 0` zum
+  Sperren und `enable: 1` zum Freigeben, wie im Doku-Beispiel.
+
+## 0.0.3 - 2026-09-25
+
+- Beschreibungen fuer alle Optionen in der Add-on-Konfiguration
+  (`translations/de.yaml` und `translations/en.yaml`).
+- `ups_mode_string` entfernt - der UPS-Modus wird fest als `"UPS"` gesendet.
+- `ble_block_invert` in `ble_block_payload_invert` umbenannt. Die Option kippt
+  ausschliesslich den Payload von `Ble.Adv` und hat nichts mit Leistungswerten
+  zu tun.
+
+## 0.0.2 - 2026-09-25
+
+- **Fix:** `image: null` aus der `config.yaml` entfernt. Der Supervisor konnte
+  die Datei dadurch nicht einlesen und hat das Add-on nicht im Store angezeigt.
+- Veraltete `arch`-Werte (`armhf`, `armv7`, `i386`) entfernt.
+- Nicht benoetigtes `map: addon_config` entfernt.
+
 ## 0.0.1 - 2026-09-20
 
 Erste Version.

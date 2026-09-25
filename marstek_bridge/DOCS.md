@@ -1,5 +1,9 @@
 # Marstek Self-consumption Bridge - Konfiguration
 
+Alle Optionen sind in der Add-on-Oberflaeche mit Namen und Beschreibung
+hinterlegt (`translations/de.yaml`, `translations/en.yaml`). Diese Seite ist
+die ausfuehrliche Referenz dazu.
+
 ## Gerät
 
 | Option | Default | Beschreibung |
@@ -52,7 +56,6 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 |---|---|---|
 | `dod_value` | `88` | Depth of Discharge, Bereich 30-88. |
 | `ble_block_enable` | `true` | Bluetooth-Sperre beim Start aktivieren. Gesendet wird `Ble.Adv {"enable": 0}` (Doku 3.9: 0 = enable). |
-| `ble_block_invert` | `false` | Falls sich die Firmware umgekehrt verhält: Payload invertieren. |
 | `led_state` | `false` | LED des Bedienpanels beim Start ausschalten. |
 
 ## Passive-Modus
@@ -65,7 +68,6 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_cd_time_max` | `300` | Maximaler Countdown in Sekunden. |
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. |
-| `ups_mode_string` | `UPS` | Die Doku nennt im Text `Ups`, im Beispiel `UPS`. Falls das Gerät `Ups` erwartet, hier umstellen. |
 
 ## Betrieb
 
@@ -99,6 +101,9 @@ Marstek-Bridge-Control/energy_control/refresh/set         PRESS
 ```
 
 ## Hinweise
+
+* Der UPS-Modus wird fest als `"UPS"` gesendet (wie im Doku-Beispiel), auch
+  wenn die Modus-Liste im Text `Ups` schreibt.
 
 * `Manual` ist absichtlich nicht im Select: der Modus braucht Zeitfenster
   (`time_num`, `start_time`, `end_time`, `week_set`) und folgt später.

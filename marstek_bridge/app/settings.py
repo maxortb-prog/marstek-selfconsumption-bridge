@@ -41,7 +41,6 @@ DEFAULTS: dict[str, Any] = {
     # Initialwerte
     "dod_value": 88,
     "ble_block_enable": True,
-    "ble_block_invert": False,
     "led_state": False,
     # Passive Mode
     "passive_power_min": -1200,
@@ -50,7 +49,6 @@ DEFAULTS: dict[str, Any] = {
     "passive_cd_time_max": 300,
     "passive_cd_time_default": 10,
     "passive_keepalive": False,
-    "ups_mode_string": "UPS",
     # Betrieb
     "watchdog_failure_threshold": 3,
     "persist_device_info": True,
@@ -95,7 +93,6 @@ class Settings:
     # -- Initialwerte ------------------------------------------------------
     dod_value: int = 88
     ble_block_enable: bool = True
-    ble_block_invert: bool = False
     led_state: bool = False
 
     # -- Passive -----------------------------------------------------------
@@ -105,7 +102,6 @@ class Settings:
     passive_cd_time_max: int = 300
     passive_cd_time_default: int = 10
     passive_keepalive: bool = False
-    ups_mode_string: str = "UPS"
 
     # -- Betrieb -----------------------------------------------------------
     watchdog_failure_threshold: int = 3

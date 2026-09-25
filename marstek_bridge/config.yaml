@@ -1,17 +1,14 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.1"
+version: "0.0.4"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
   Venus Speicher ueber die lokale UDP Open API und bildet sie via MQTT
   Auto-Discovery in Home Assistant ab.
-url: https://github.com/<YOUR-GITHUB-USER>/marstek-selfconsumption-bridge
+url: https://github.com/maxortb-prog/marstek-selfconsumption-bridge
 arch:
   - aarch64
   - amd64
-  - armv7
-  - armhf
-  - i386
 init: false
 startup: services
 boot: auto
@@ -29,8 +26,6 @@ ports_description:
 # Supervisor-Watchdog: startet das Add-on neu, sobald /health nicht mehr
 # mit HTTP 200 antwortet (MQTT getrennt ODER Geraetekommunikation gestoert).
 watchdog: "http://[HOST]:[PORT:8099]/health"
-map:
-  - addon_config:rw
 options:
   device_ip: "192.168.0.45"
   device_udp_port: 30000
@@ -53,7 +48,6 @@ options:
   enable_em: false
   dod_value: 88
   ble_block_enable: true
-  ble_block_invert: false
   led_state: false
   passive_power_min: -1200
   passive_power_max: 1200
@@ -61,7 +55,6 @@ options:
   passive_cd_time_max: 300
   passive_cd_time_default: 10
   passive_keepalive: false
-  ups_mode_string: "UPS"
   watchdog_failure_threshold: 3
   persist_device_info: true
   health_port: 8099
@@ -88,7 +81,6 @@ schema:
   enable_em: bool
   dod_value: int(30,88)
   ble_block_enable: bool
-  ble_block_invert: bool
   led_state: bool
   passive_power_min: int(-5000,0)
   passive_power_max: int(0,5000)
@@ -96,9 +88,7 @@ schema:
   passive_cd_time_max: int(1,3600)
   passive_cd_time_default: int(0,3600)
   passive_keepalive: bool
-  ups_mode_string: list(UPS|Ups)
   watchdog_failure_threshold: int(1,100)
   persist_device_info: bool
   health_port: int(1024,65535)
   log_level: list(trace|debug|info|warning|error)
-image: null

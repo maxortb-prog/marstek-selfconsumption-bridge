@@ -390,11 +390,11 @@ class Bridge:
         return True
 
     def _set_ble_block(self, enabled: bool) -> bool:
-        # Doku 3.9: "enable: 0 = enable, 1 = disable" (Beispiel sendet 0).
-        payload_value = 0 if enabled else 1
-        if self.s.ble_block_invert:
-            payload_value = 1 - payload_value
-        result = self._query(M_BLE_ADV, {"enable": payload_value}, with_instance=False)
+        # Doku 3.9: "enable: 0 = enable, 1 = disable" (Beispiel sendet 0),
+        # d. h. 0 aktiviert die Bluetooth-Sperre.
+        result = self._query(
+            M_BLE_ADV, {"enable": 0 if enabled else 1}, with_instance=False
+        )
         if result is None:
             return False
         self.states[GRP_SYSTEM]["ble_block"] = bool(enabled)
@@ -420,7 +420,7 @@ class Bridge:
         if mode == MODE_AI:
             return {"mode": MODE_AI, "ai_cfg": {"enable": 1}}
         if mode == MODE_UPS:
-            return {"mode": self.s.ups_mode_string, "ups_cfg": {"enable": 1}}
+            return {"mode": MODE_UPS, "ups_cfg": {"enable": 1}}
         if mode == MODE_PASSIVE:
             power = int(ctrl.get("passive_power", 0))
             power = max(self.s.passive_power_min, min(self.s.passive_power_max, power))
