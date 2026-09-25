@@ -95,6 +95,23 @@ Vorzeichen: **positiv = Einspeisen/Entladen** (0 … `passive_power_max`),
 
 ---
 
+## Selbstregelung
+
+Mit dem Switch **Self-regulation** übernimmt die Bridge die Leistung im
+Passive-Modus aus einem MQTT-Topic:
+
+```
+Ausgang = clamp( Regelwert - Reserve , 0 , "Passive power" )
+```
+
+Die Number-Entity *Passive power* ist dann die Obergrenze, nach unten wird bei
+0 W begrenzt - es wird nie ins Netz eingespeist. Kommen keine neuen Werte,
+sendet der Keepalive den letzten Wert erneut und startet den Countdown des
+Geräts neu. Details und der Unterschied zwischen `setpoint`- und `grid`-Modus
+stehen in [DOCS.md](marstek_bridge/DOCS.md).
+
+---
+
 ## Watchdog
 
 * `request_retries = 0` → ein Versuch, Timeout wird **verworfen**, kein Watchdog.

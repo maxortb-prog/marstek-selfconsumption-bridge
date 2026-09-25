@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import time
@@ -74,6 +75,8 @@ class Bridge:
         self._discovered: set[str] = set()
         self._last_poll = 0.0
         self._last_passive_push = 0.0
+        self._last_regulation_send = 0.0
+        self._pending_regulation: float | None = None
 
         self.states: dict[str, dict[str, Any]] = {
             GRP_SYSTEM: {},
@@ -110,6 +113,9 @@ class Bridge:
             "passive_power": settings.passive_power_default,
             "passive_cd_time": settings.passive_cd_time_default,
             "applied_mode": None,
+            "self_regulation": settings.self_regulation_enabled,
+            "regulation_input": None,
+            "regulation_output": None,
         }
         self.states[GRP_SYSTEM].update(
             {
@@ -144,6 +150,14 @@ class Bridge:
             self.s.request_max_time,
             self.s.poll_interval,
         )
+
+        if self.s.self_regulation_enabled:
+            _LOGGER.info(
+                "Selbstregelung aktiv (%s) - Eingangstopic '%s', Reserve %s W",
+                self.s.self_regulation_mode,
+                self.regulation_topic,
+                self.s.self_regulation_reserve,
+            )
 
         if not self._connect_mqtt_blocking():
             return
@@ -221,6 +235,8 @@ class Bridge:
             f"{base}/{GRP_ENERGY_STATUS}/refresh/set",
             f"{base}/{GRP_ENERGY_MODE}/refresh/set",
             f"{base}/{GRP_ENERGY_METER}/refresh/set",
+            f"{base}/{GRP_ENERGY_CONTROL}/self_regulation/set",
+            self.regulation_topic,
         ):
             self.mqtt.subscribe(topic)
 
@@ -428,17 +444,23 @@ class Bridge:
         if mode == MODE_UPS:
             return {"mode": MODE_UPS, "ups_cfg": {"enable": 1}}
         if mode == MODE_PASSIVE:
-            power = int(ctrl.get("passive_power", 0))
-            power = max(self.s.passive_power_min, min(self.s.passive_power_max, power))
             cd = int(ctrl.get("passive_cd_time", self.s.passive_cd_time_default))
             cd = max(0, min(self.s.passive_cd_time_max, cd))
             return {
                 "mode": MODE_PASSIVE,
-                "passive_cfg": {"power": power, "cd_time": cd},
+                "passive_cfg": {
+                    "power": self._effective_passive_power(),
+                    "cd_time": cd,
+                },
             }
         raise ValueError(f"Unbekannter Modus: {mode}")
 
-    def _apply_mode(self) -> bool:
+    def _apply_mode(self, refresh: bool = True) -> bool:
+        """Den vorgemerkten Modus an das Geraet senden.
+
+        ``refresh=False`` laesst das anschliessende ES.GetMode weg - das nutzt
+        die Selbstregelung, damit pro Regelschritt nur ein Kommando laeuft.
+        """
         mode = str(self.states[GRP_ENERGY_CONTROL].get("target_mode") or MODE_AUTO)
         try:
             config = self._build_mode_config(mode)
@@ -454,9 +476,161 @@ class Bridge:
         self._note_set_result(M_ES_SET_MODE, result)
         self._publish_state(GRP_ENERGY_CONTROL)
         self._last_passive_push = time.monotonic()
-        self._sleep_with_commands(self.s.request_delay)
-        self._step_es_mode()
+        if refresh:
+            self._sleep_with_commands(self.s.request_delay)
+            self._step_es_mode()
         return True
+
+    # =================================================================
+    # Selbstregelung (Passive)
+    # =================================================================
+    @property
+    def regulation_topic(self) -> str:
+        """Topic, auf dem der gefilterte Regelwert erwartet wird."""
+        custom = (self.s.self_regulation_topic or "").strip()
+        return custom or f"{self.s.base_topic}/{GRP_ENERGY_CONTROL}/regulation_input"
+
+    def _regulation_active(self) -> bool:
+        return bool(self.states[GRP_ENERGY_CONTROL].get("self_regulation"))
+
+    def _effective_passive_power(self) -> int:
+        """Leistung, die tatsaechlich im Passive-Kommando landet.
+
+        Ohne Selbstregelung ist das der Wert der Number-Entity. Mit
+        Selbstregelung ist die Number-Entity die Obergrenze und der geregelte
+        Wert wird gesendet.
+        """
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if self._regulation_active():
+            value = ctrl.get("regulation_output")
+            if value is None:
+                _LOGGER.info(
+                    "Selbstregelung aktiv, aber noch kein Regelwert empfangen "
+                    "- es werden 0 W gesendet"
+                )
+                return 0
+            return int(value)
+        power = int(ctrl.get("passive_power", 0))
+        return max(self.s.passive_power_min, min(self.s.passive_power_max, power))
+
+    def _set_self_regulation(self, enabled: bool) -> None:
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        ctrl["self_regulation"] = enabled
+        _LOGGER.info(
+            "\033[1;36mSelbstregelung %s\033[0m",
+            "aktiviert" if enabled else "deaktiviert",
+        )
+        if not enabled:
+            ctrl["regulation_output"] = None
+            self._pending_regulation = None
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if enabled and ctrl.get("regulation_input") is not None:
+            self._pending_regulation = float(ctrl["regulation_input"])
+            self._flush_regulation()
+
+    @staticmethod
+    def _parse_number(payload: str) -> float | None:
+        """Zahl aus einem MQTT-Payload lesen: roh, JSON-Zahl oder JSON-Objekt."""
+        text = payload.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return None
+        if isinstance(data, (int, float)):
+            return float(data)
+        if isinstance(data, dict):
+            for key in ("value", "state", "power", "p"):
+                candidate = data.get(key)
+                if isinstance(candidate, (int, float)):
+                    return float(candidate)
+                if isinstance(candidate, str):
+                    try:
+                        return float(candidate.strip())
+                    except ValueError:
+                        continue
+        return None
+
+    def _on_regulation_value(self, payload: str) -> None:
+        value = self._parse_number(payload)
+        if value is None:
+            _LOGGER.warning("Regelwert nicht lesbar: %r", payload[:80])
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        ctrl["regulation_input"] = round(value, 1)
+        self._publish_state(GRP_ENERGY_CONTROL)
+
+        if not self._regulation_active():
+            _LOGGER.trace("Regelwert %.1f W empfangen, Selbstregelung aus", value)
+            return
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            _LOGGER.debug(
+                "Regelwert %.1f W empfangen, aber Passive ist nicht aktiv", value
+            )
+            return
+        self._pending_regulation = value
+        self._flush_regulation()
+
+    def _compute_regulation_output(self, value: float) -> int:
+        """Regelwert auf die zu sendende Leistung abbilden.
+
+        Die Number-Entity "Passive power" ist dabei die Obergrenze, die Reserve
+        haelt den Netzbezug leicht im positiven Bereich, und nach unten wird bei
+        0 W begrenzt - es wird also nie ins Netz eingespeist oder aus dem Netz
+        geladen.
+        """
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
+        reserve = self.s.self_regulation_reserve
+
+        if self.s.self_regulation_mode == "grid":
+            base = int(ctrl.get("regulation_output") or 0)
+            target = base + value - reserve
+        else:
+            target = value - reserve
+        return int(max(0, min(cap, round(target))))
+
+    def _flush_regulation(self) -> None:
+        """Ausstehenden Regelwert senden, sofern Takt und Totband es zulassen."""
+        if self._pending_regulation is None or not self._regulation_active():
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return
+        if time.monotonic() - self._last_regulation_send < self.s.self_regulation_min_interval:
+            return
+
+        value = self._pending_regulation
+        self._pending_regulation = None
+        out = self._compute_regulation_output(value)
+        last = ctrl.get("regulation_output")
+
+        if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
+            _LOGGER.trace(
+                "Regelwert %.1f W -> %s W innerhalb des Totbands (%s W), nicht gesendet",
+                value,
+                out,
+                self.s.self_regulation_deadband,
+            )
+            return
+
+        ctrl["regulation_output"] = out
+        _LOGGER.info(
+            "Selbstregelung: Eingang %.1f W -> Ausgang \033[1m%s W\033[0m "
+            "(Reserve %s W, Deckel %s W)",
+            value,
+            out,
+            self.s.self_regulation_reserve,
+            max(0, int(ctrl.get("passive_power", 0))),
+        )
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if self._apply_mode(refresh=False):
+            self._last_regulation_send = time.monotonic()
 
     # =================================================================
     # MQTT-Kommandos
@@ -473,6 +647,9 @@ class Bridge:
                 _LOGGER.exception("Fehler bei Kommando %s: %s", topic, err)
 
     def _handle_command(self, topic: str, payload: str) -> None:
+        if topic == self.regulation_topic:
+            self._on_regulation_value(payload)
+            return
         base = self.s.base_topic
         suffix = topic[len(base) + 1 :] if topic.startswith(base) else topic
         _LOGGER.debug("Kommando %s = %s", suffix, payload)
@@ -506,6 +683,8 @@ class Bridge:
                 0, min(self.s.passive_cd_time_max, value)
             )
             self._publish_state(GRP_ENERGY_CONTROL)
+        elif suffix == f"{GRP_ENERGY_CONTROL}/self_regulation/set":
+            self._set_self_regulation(payload.strip().upper() == "ON")
         elif suffix == f"{GRP_ENERGY_CONTROL}/apply/set":
             self._apply_mode()
         elif suffix == f"{GRP_ENERGY_CONTROL}/refresh/set":
@@ -551,6 +730,7 @@ class Bridge:
         ):
             self._poll()
 
+        self._flush_regulation()
         self._passive_keepalive()
         self._sleep(0.2)
 
@@ -578,18 +758,26 @@ class Bridge:
             self._set_communication(True)
 
     def _passive_keepalive(self) -> None:
-        if not self.s.passive_keepalive or not self._initialized:
+        if not self._initialized:
             return
         ctrl = self.states[GRP_ENERGY_CONTROL]
         if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return
+        # Bei aktiver Selbstregelung ist das Nachsenden zwingend, sonst laeuft
+        # der Countdown des Geraets ab, sobald keine neuen Werte kommen.
+        if not (self.s.passive_keepalive or self._regulation_active()):
             return
         cd = int(ctrl.get("passive_cd_time", self.s.passive_cd_time_default) or 0)
         if cd <= 0:
             return
         interval = max(1.0, cd / 2.0)
         if time.monotonic() - self._last_passive_push >= interval:
-            _LOGGER.debug("Passive-Keepalive (cd_time=%ss)", cd)
-            self._apply_mode()
+            _LOGGER.debug(
+                "Passive-Keepalive: %s W erneut gesendet (cd_time=%ss)",
+                self._effective_passive_power(),
+                cd,
+            )
+            self._apply_mode(refresh=False)
 
     # =================================================================
     # Hilfsfunktionen

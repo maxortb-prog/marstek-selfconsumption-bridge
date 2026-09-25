@@ -432,6 +432,30 @@ def build_control_entities(
             extra={"payload_press": "PRESS"},
         ),
         Ent("applied_mode", "Last applied mode", icon="mdi:history", category=DIAG),
+        Ent(
+            "self_regulation",
+            "Self-regulation",
+            component="switch",
+            icon="mdi:auto-mode",
+            command_suffix="self_regulation",
+            value_template=bool_tpl("self_regulation"),
+        ),
+        Ent(
+            "regulation_input",
+            "Regulation input",
+            device_class="power",
+            unit="W",
+            state_class="measurement",
+            icon="mdi:import",
+        ),
+        Ent(
+            "regulation_output",
+            "Regulation output",
+            device_class="power",
+            unit="W",
+            state_class="measurement",
+            icon="mdi:export",
+        ),
     ]
 
 

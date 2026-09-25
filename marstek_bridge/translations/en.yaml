@@ -63,7 +63,24 @@ configuration:
       When it expires the device leaves the passive setpoint again, the docs
       specify a maximum of 300 seconds.
       passive_keepalive: re-sends the passive command every cd_time/2 seconds,
-      needed if the setpoint should be held permanently.
+      needed if the setpoint should be held permanently. With self-regulation
+      active this happens in any case.
+      self_regulation_enabled: initial state of the self-regulation. While
+      active, the power sent is derived from the MQTT control value and the
+      "Passive power" number entity only acts as the upper limit.
+      self_regulation_topic: topic of the filtered control value. Empty = the
+      topic <mqtt_base_topic>/energy_control/regulation_input. Accepts a plain
+      number or JSON with value, state, power.
+      self_regulation_mode: setpoint = the value already is the desired battery
+      setpoint and is used directly. grid = the value is the grid power and is
+      added to the previous setpoint.
+      self_regulation_reserve: reserve in watts subtracted from the control
+      value so grid import stays slightly positive instead of exporting. Typical
+      values are 10-15 W.
+      self_regulation_deadband: changes smaller than this value in watts do not
+      trigger a new command.
+      self_regulation_min_interval: minimum time between two control commands in
+      seconds.
   general_settings:
     name: General
     description: >-

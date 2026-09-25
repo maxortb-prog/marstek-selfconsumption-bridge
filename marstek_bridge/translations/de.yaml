@@ -64,7 +64,24 @@ configuration:
       Nach dessen Ablauf verlässt das Gerät die Passive-Vorgabe wieder, laut
       Doku maximal 300 Sekunden.
       passive_keepalive: sendet den Passive-Befehl automatisch alle cd_time/2
-      Sekunden erneut, nötig wenn die Vorgabe dauerhaft stehen soll.
+      Sekunden erneut, nötig wenn die Vorgabe dauerhaft stehen soll. Bei
+      aktiver Selbstregelung geschieht das ohnehin immer.
+      self_regulation_enabled: Startzustand der Selbstregelung. Ist sie aktiv,
+      wird die gesendete Leistung aus dem MQTT-Regelwert berechnet und die
+      Number-Entity "Passive power" dient nur noch als Obergrenze.
+      self_regulation_topic: Topic des gefilterten Regelwerts. Leer = das Topic
+      <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
+      Zahl oder JSON mit value, state, power.
+      self_regulation_mode: setpoint = der Wert ist bereits der gewünschte
+      Sollwert des Speichers und wird direkt übernommen. grid = der Wert ist die
+      Netzleistung und wird auf den bisherigen Sollwert aufsummiert.
+      self_regulation_reserve: Reserve in Watt, die vom Regelwert abgezogen
+      wird, damit der Netzbezug leicht positiv bleibt und nicht eingespeist
+      wird. Übliche Werte 10-15 W.
+      self_regulation_deadband: Änderungen kleiner als dieser Wert in Watt
+      lösen kein neues Kommando aus.
+      self_regulation_min_interval: minimaler Abstand zwischen zwei Regelbefehlen
+      in Sekunden.
   general_settings:
     name: Allgemein
     description: >-

@@ -79,7 +79,13 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_power_default` | `0` | Startwert der Number-Entity. |
 | `passive_cd_time_max` | `300` | Maximaler Countdown in Sekunden. |
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
-| `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. |
+| `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
+| `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
+| `self_regulation_topic` | *(leer)* | Topic des gefilterten Regelwerts. Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
+| `self_regulation_mode` | `setpoint` | `setpoint` = Wert ist der fertige Sollwert und wird direkt übernommen. `grid` = Wert ist die Netzleistung und wird auf den bisherigen Sollwert aufsummiert. |
+| `self_regulation_reserve` | `12` | Reserve in Watt, die abgezogen wird, damit der Netzbezug leicht positiv bleibt. |
+| `self_regulation_deadband` | `10` | Änderungen kleiner als dieser Wert lösen kein neues Kommando aus. |
+| `self_regulation_min_interval` | `2.0` | Minimaler Abstand zwischen zwei Regelbefehlen in Sekunden. |
 
 ## Betrieb
 
@@ -90,6 +96,57 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
 | `log_level` | `info` | `trace` \| `debug` \| `info` \| `warning` \| `error`. `trace` loggt jedes UDP- und MQTT-Paket. |
 | `log_full_line_color` | `true` | Ein: die komplette Zeile erscheint in der Levelfarbe (grau/cyan/grün/gelb/rot). Aus: nur Zeitstempel, Level und Logger-Name sind farbige Akzente. |
+
+## Selbstregelung im Passive-Modus
+
+Die Bridge lauscht auf einem Topic mit dem gefilterten Regelwert und leitet
+daraus die Leistung des Passive-Kommandos ab.
+
+```
+Ausgang = clamp( f(Regelwert) - Reserve , 0 , "Passive power" )
+```
+
+* **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
+  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel. Steht sie
+  auf 300 W, werden aus einem Regelwert von 400 W trotzdem nur 300 W.
+* **Untergrenze** ist fest 0 W. Der Ausgang wird nie negativ, es wird also
+  weder ins Netz eingespeist noch aus dem Netz geladen.
+* **Reserve** (`self_regulation_reserve`, Standard 12 W) wird abgezogen, damit
+  der Netzbezug leicht im positiven Bereich bleibt statt auf 0 zu kippen.
+* **Modus** (`self_regulation_mode`):
+  * `setpoint` - der empfangene Wert ist bereits der gewünschte Sollwert des
+    Speichers (z. B. in HA aus Last minus PV gerechnet) und wird direkt
+    übernommen.
+  * `grid` - der empfangene Wert ist die Netzleistung (Bezug positiv). Der neue
+    Sollwert ist `alter Sollwert + Netzwert - Reserve`. Diese Variante regelt
+    sich selbst ein und ist die richtige Wahl, wenn der Wert direkt vom
+    Zähler kommt.
+* **Kein neuer Wert?** Der Keepalive sendet den zuletzt berechneten Wert alle
+  `cd_time/2` Sekunden erneut und startet damit den Countdown des Geräts neu.
+  Bei aktiver Selbstregelung läuft er unabhängig von `passive_keepalive`.
+* **Voraussetzung:** Der Modus *Passive* muss über Select und Apply-Button
+  aktiv sein. Solange ein anderer Modus läuft, wird der Regelwert nur
+  gespeichert und angezeigt.
+
+Payload-Formate: eine reine Zahl (`415` oder `415.7`) oder JSON mit einem der
+Schlüssel `value`, `state`, `power`, `p`.
+
+Beispiel-Automation, die einen gefilterten Sensor weiterreicht:
+
+```yaml
+- trigger:
+    - platform: state
+      entity_id: sensor.grid_power_filtered
+  action:
+    - service: mqtt.publish
+      data:
+        topic: Marstek-Bridge-Control/energy_control/regulation_input
+        payload: "{{ states('sensor.grid_power_filtered') }}"
+```
+
+Neue Entities im Gerät *Marstek Energy Control*: Switch **Self-regulation**,
+Sensor **Regulation input** (zuletzt empfangen) und Sensor **Regulation output**
+(zuletzt gesendet).
 
 ## MQTT-Topics
 
@@ -109,6 +166,8 @@ Marstek-Bridge-Control/system/led/set                     ON | OFF
 Marstek-Bridge-Control/energy_control/mode/set            Auto|AI|Passive|UPS
 Marstek-Bridge-Control/energy_control/passive_power/set   W
 Marstek-Bridge-Control/energy_control/passive_cd_time/set s
+Marstek-Bridge-Control/energy_control/self_regulation/set ON | OFF
+Marstek-Bridge-Control/energy_control/regulation_input    W  (Regelwert, konfigurierbar)
 Marstek-Bridge-Control/energy_control/apply/set           PRESS
 Marstek-Bridge-Control/energy_control/refresh/set         PRESS  (alle Gruppen)
 Marstek-Bridge-Control/battery/refresh/set                PRESS  (nur Bat.GetStatus)

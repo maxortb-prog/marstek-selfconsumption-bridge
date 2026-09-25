@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.8 - 2026-09-25
+
+- Selbstregelung fuer den Passive-Modus: die Bridge abonniert ein Topic mit
+  einem gefilterten Regelwert und berechnet daraus die gesendete Leistung.
+- Die Number-Entity *Passive power* wirkt bei aktiver Selbstregelung als
+  Obergrenze, nach unten wird bei 0 W begrenzt (keine Einspeisung ins Netz).
+- Konfigurierbare Reserve (Standard 12 W), Totband und minimaler Sendeabstand.
+- Zwei Regelarten: `setpoint` (Wert direkt uebernehmen) und `grid` (Netzwert
+  auf den bisherigen Sollwert aufsummieren).
+- Der Keepalive laeuft bei aktiver Selbstregelung immer und startet den
+  Countdown des Geraets neu, wenn keine neuen Werte eintreffen.
+- Neue Entities: Switch *Self-regulation*, Sensoren *Regulation input* und
+  *Regulation output*.
+
 ## 0.0.7 - 2026-09-25
 
 - Die komplette Logzeile wird jetzt in der Farbe ihres Levels ausgegeben,
