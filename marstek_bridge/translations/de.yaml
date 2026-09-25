@@ -1,151 +1,88 @@
 configuration:
-  device_ip:
-    name: Geräte-IP
+  marstek_network_settings:
+    name: Marstek Netzwerk
     description: >-
-      IP-Adresse des Marstek Speichers im lokalen Netz. Eine statische IP bzw.
-      DHCP-Reservierung wird dringend empfohlen.
-  device_udp_port:
-    name: UDP-Port des Geräts
+      Erreichbarkeit des Speichers im LAN.
+      device_ip: IP-Adresse des Geräts, statische IP bzw. DHCP-Reservierung
+      dringend empfohlen.
+      device_udp_port: der in der Marstek-App gesetzte Port der Open API,
+      Default 30000, empfohlen 49152-65535.
+      device_ble_mac und device_type: leer lassen, werden nach dem ersten
+      Marstek.GetDevice ausgelesen und automatisch hier eingetragen.
+      local_udp_port: lokaler Quellport, 0 = zufällig. Einzelne Firmware-Stände
+      antworten nur an einen festen Port, dann denselben Wert wie
+      device_udp_port eintragen.
+  mqtt_settings:
+    name: MQTT
     description: >-
-      Der in der Marstek-App gesetzte Port der Open API. Default 30000,
-      empfohlen 49152-65535.
-  device_ble_mac:
-    name: Bluetooth-MAC (automatisch)
+      Anbindung an den Broker und an die MQTT-Auto-Discovery.
+      mqtt_host und mqtt_port: Broker, für das Mosquitto-Add-on
+      core-mosquitto:1883.
+      mqtt_username und mqtt_password: Zugangsdaten, Benutzer leer lassen für
+      eine anonyme Verbindung.
+      mqtt_discovery_prefix: muss zur Einstellung der MQTT-Integration passen,
+      normalerweise homeassistant.
+      mqtt_base_topic: Wurzel aller Status- und Kommando-Topics dieser Bridge.
+      mqtt_suggested_area: Bereich, den Home Assistant beim Anlegen der Geräte
+      vorschlägt.
+  message_settings:
+    name: Kommunikation
     description: >-
-      Leer lassen. Wird nach dem ersten Marstek.GetDevice ausgelesen und hier
-      automatisch zurückgeschrieben.
-  device_type:
-    name: Gerätetyp (automatisch)
+      Zeitverhalten der UDP-Kommunikation und des Watchdogs.
+      request_delay: Pause zwischen zwei Kommandos in Sekunden, der Speicher
+      verträgt keine parallelen Anfragen.
+      request_timeout: Timeout je einzelnem Versuch.
+      request_retries: 0 = nur ein Versuch, ein Timeout wird verworfen und löst
+      KEINEN Watchdog aus. Größer 0 = so viele Wiederholungen, schlägt auch der
+      letzte Versuch fehl, wird der Watchdog ausgelöst.
+      request_max_time: hartes Limit über alle Versuche einer Nachricht, bei
+      Überschreitung greift ebenfalls der Watchdog.
+      poll_enabled: zyklisches Abfragen ein oder aus. Aus = es wird nur nach dem
+      Start und über die Refresh-Buttons abgefragt.
+      poll_interval: Abstand zwischen zwei Polling-Zyklen in Sekunden.
+  additions_status_requests:
+    name: Zusätzliche Abfragen und Startwerte
     description: >-
-      Leer lassen. Wird automatisch befüllt (z. B. VenusC) und in Home
-      Assistant als Modellbezeichnung verwendet.
-  local_udp_port:
-    name: Lokaler Quellport
+      Optionale Abfrage und die Werte, die beim Start einmalig gesetzt werden.
+      enable_em: zusätzlich EM.GetStatus abfragen und das Gerät "Marstek Energy
+      Meter" mit den CT-Daten anlegen.
+      dod_value: Entladetiefe in Prozent, zulässig 30-88, Werkswert 88. Später
+      jederzeit über die Number-Entity änderbar.
+      ble_block_enable: aktiviert beim Start die Bluetooth-Sperre (Ble.Adv), so
+      dass sich die App nicht parallel verbindet und Befehle kollidieren.
+      led_state: LED des Bedienpanels, aus = LED wird beim Start abgeschaltet.
+  passiv_mode_settings:
+    name: Passive-Modus
     description: >-
-      0 = zufälliger Port. Einzelne Firmware-Stände antworten nur an einen
-      festen Quellport - dann denselben Wert wie beim UDP-Port des Geräts
-      eintragen.
-  mqtt_host:
-    name: MQTT-Broker
-    description: Hostname oder IP des Brokers. Für das Mosquitto-Add-on core-mosquitto.
-  mqtt_port:
-    name: MQTT-Port
-    description: Port des Brokers, üblicherweise 1883.
-  mqtt_username:
-    name: MQTT-Benutzer
-    description: Benutzername des Brokers. Leer lassen für eine anonyme Verbindung.
-  mqtt_password:
-    name: MQTT-Passwort
-    description: Passwort zum MQTT-Benutzer.
-  mqtt_discovery_prefix:
-    name: Discovery-Präfix
+      Grenzen und Startwerte der Eigenverbrauchsregelung.
+      passive_power_min und passive_power_max: Grenzen der Number-Entity in
+      Watt. Negativ bedeutet Laden aus dem Netz, positiv Einspeisen bzw.
+      Entladen.
+      passive_power_default: Leistung, mit der die Entity nach einem Neustart
+      beginnt.
+      passive_cd_time_max und passive_cd_time_default: Countdown in Sekunden.
+      Nach dessen Ablauf verlässt das Gerät die Passive-Vorgabe wieder, laut
+      Doku maximal 300 Sekunden.
+      passive_keepalive: sendet den Passive-Befehl automatisch alle cd_time/2
+      Sekunden erneut, nötig wenn die Vorgabe dauerhaft stehen soll.
+  general_settings:
+    name: Allgemein
     description: >-
-      Präfix der MQTT-Auto-Discovery. Muss zur Einstellung der
-      MQTT-Integration passen, normalerweise homeassistant.
-  mqtt_base_topic:
-    name: Basis-Topic
-    description: >-
-      Wurzel aller Status- und Kommando-Topics dieser Bridge, z. B.
-      Marstek-Bridge-Control/system/state.
-  mqtt_suggested_area:
-    name: Vorgeschlagener Bereich
-    description: >-
-      Bereich, den Home Assistant beim Anlegen der Geräte vorschlägt.
-  request_delay:
-    name: Pause zwischen Abfragen (s)
-    description: >-
-      Wartezeit zwischen zwei UDP-Kommandos. Der Speicher verträgt keine
-      parallelen Anfragen; 1 Sekunde ist ein guter Startwert.
-  request_timeout:
-    name: Timeout je Versuch (s)
-    description: Wie lange auf die Antwort eines einzelnen Versuchs gewartet wird.
-  request_retries:
-    name: Wiederholungen
-    description: >-
-      0 = nur ein Versuch, ein Timeout wird verworfen und löst KEINEN Watchdog
-      aus. Größer 0 = so viele Wiederholungen; schlägt auch der letzte Versuch
-      fehl, wird der Watchdog ausgelöst.
-  request_max_time:
-    name: Maximale Zeit je Nachricht (s)
-    description: >-
-      Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten,
-      bricht die Bridge ab und löst den Watchdog aus.
-  poll_interval:
-    name: Abfrageintervall (s)
-    description: >-
-      Abstand zwischen zwei Polling-Zyklen (Batterie, PV, ES.GetStatus,
-      ES.GetMode und optional EM).
-  poll_enabled:
-    name: Zyklisches Abfragen
-    description: >-
-      Aus = es wird nur nach dem Start und beim Druck auf "Refresh data"
-      abgefragt.
-  enable_em:
-    name: Energiezähler abfragen
-    description: >-
-      Zusätzlich EM.GetStatus abfragen und das Gerät "Marstek Energy Meter"
-      mit den CT-Daten anlegen.
-  dod_value:
-    name: DOD (%)
-    description: >-
-      Entladetiefe, die beim Start gesetzt wird. Zulässig 30-88, Werkswert 88.
-      Später jederzeit über die Number-Entity änderbar.
-  ble_block_enable:
-    name: Bluetooth-Sperre beim Start
-    description: >-
-      Aktiviert beim Start die Bluetooth-Sperre des Geräts (Ble.Adv). Verhindert,
-      dass sich parallel die App verbindet und Befehle kollidieren.
-  led_state:
-    name: LED beim Start einschalten
-    description: LED des Bedienpanels. Aus = LED wird beim Start abgeschaltet.
-  passive_power_min:
-    name: Minimale Passive-Leistung (W)
-    description: >-
-      Untere Grenze der Number-Entity. Negative Werte bedeuten Laden aus dem
-      Netz, z. B. -1200.
-  passive_power_max:
-    name: Maximale Passive-Leistung (W)
-    description: >-
-      Obere Grenze der Number-Entity. Positive Werte bedeuten Einspeisen bzw.
-      Entladen, z. B. 1200.
-  passive_power_default:
-    name: Passive-Leistung Startwert (W)
-    description: Wert, mit dem die Number-Entity nach einem Neustart beginnt.
-  passive_cd_time_max:
-    name: Maximaler Countdown (s)
-    description: >-
-      Obergrenze für cd_time. Nach Ablauf des Countdowns verlässt das Gerät die
-      Passive-Vorgabe wieder. Laut Doku maximal 300 Sekunden.
-  passive_cd_time_default:
-    name: Countdown Startwert (s)
-    description: Wert, mit dem der Countdown nach einem Neustart beginnt.
-  passive_keepalive:
-    name: Passive automatisch nachsenden
-    description: >-
-      Sendet den Passive-Befehl automatisch alle cd_time/2 Sekunden erneut,
-      solange Passive aktiv ist. Nötig, wenn die Vorgabe dauerhaft stehen soll.
-  watchdog_failure_threshold:
-    name: Watchdog-Schwelle
-    description: >-
-      Anzahl aufeinanderfolgender Watchdog-Auslösungen, bis der Health-Endpoint
-      auf unhealthy wechselt und der Supervisor das Add-on neu startet. Höhere
-      Werte verhindern Neustart-Schleifen bei kurzen Aussetzern.
-  persist_device_info:
-    name: Gerätedaten zurückschreiben
-    description: >-
-      Schreibt Bluetooth-MAC und Gerätetyp nach dem ersten Auslesen über die
-      Supervisor-API in diese Konfiguration zurück.
-  health_port:
-    name: Health-Port
-    description: >-
-      Port des Health-Endpoints (/health und /status), den der
-      Supervisor-Watchdog abfragt. Änderung erfordert eine Anpassung des
+      Watchdog und Betriebsverhalten des Add-ons.
+      watchdog_failure_threshold: Anzahl aufeinanderfolgender
+      Watchdog-Auslösungen, bis der Health-Endpoint auf unhealthy wechselt und
+      der Supervisor das Add-on neu startet. Höhere Werte verhindern
+      Neustart-Schleifen bei kurzen Aussetzern.
+      persist_device_info: schreibt Bluetooth-MAC und Gerätetyp nach dem ersten
+      Auslesen über die Supervisor-API in diese Konfiguration zurück.
+      health_port: Port des Health-Endpoints (/health und /status), den der
+      Supervisor-Watchdog abfragt. Eine Änderung erfordert eine Anpassung des
       watchdog-Eintrags im Add-on.
-  log_level:
-    name: Log-Level
+  logging:
+    name: Protokollierung
     description: >-
-      trace protokolliert jedes einzelne UDP- und MQTT-Paket, debug jeden
-      Abfrageschritt, info nur den normalen Ablauf. Alle Level werden farbig
-      ausgegeben.
+      log_level: trace protokolliert jedes einzelne UDP- und MQTT-Paket, debug
+      jeden Abfrageschritt, info nur den normalen Ablauf. Alle Level werden
+      farbig ausgegeben.
 network:
   8099/tcp: Health-Endpoint für den Supervisor-Watchdog

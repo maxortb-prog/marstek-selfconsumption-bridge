@@ -1,148 +1,85 @@
 configuration:
-  device_ip:
-    name: Device IP
+  marstek_network_settings:
+    name: Marstek network
     description: >-
-      IP address of the Marstek battery on your LAN. A static IP or a DHCP
-      reservation is strongly recommended.
-  device_udp_port:
-    name: Device UDP port
+      How the battery is reached on your LAN.
+      device_ip: IP address of the device, a static IP or DHCP reservation is
+      strongly recommended.
+      device_udp_port: the Open API port configured in the Marstek app,
+      default 30000, recommended 49152-65535.
+      device_ble_mac and device_type: leave empty, they are read during the
+      first Marstek.GetDevice call and filled in automatically.
+      local_udp_port: local source port, 0 = random. Some firmware versions
+      only reply to a fixed port, then use the same value as device_udp_port.
+  mqtt_settings:
+    name: MQTT
     description: >-
-      The Open API port configured in the Marstek app. Default 30000,
-      recommended 49152-65535.
-  device_ble_mac:
-    name: Bluetooth MAC (automatic)
+      Broker connection and MQTT auto-discovery.
+      mqtt_host and mqtt_port: the broker, core-mosquitto:1883 for the
+      Mosquitto add-on.
+      mqtt_username and mqtt_password: credentials, leave the user empty for an
+      anonymous connection.
+      mqtt_discovery_prefix: must match the MQTT integration setting, normally
+      homeassistant.
+      mqtt_base_topic: root of all state and command topics of this bridge.
+      mqtt_suggested_area: area Home Assistant suggests when the devices are
+      created.
+  message_settings:
+    name: Communication
     description: >-
-      Leave empty. Read during the first Marstek.GetDevice call and written
-      back here automatically.
-  device_type:
-    name: Device type (automatic)
+      Timing of the UDP communication and of the watchdog.
+      request_delay: pause between two commands in seconds, the battery does not
+      handle parallel requests.
+      request_timeout: timeout per single attempt.
+      request_retries: 0 = single attempt, a timeout is discarded and does NOT
+      trigger the watchdog. Greater than 0 = that many retries, if the last
+      attempt also fails the watchdog is triggered.
+      request_max_time: hard limit across all attempts of one message, exceeding
+      it also triggers the watchdog.
+      poll_enabled: cyclic polling on or off. Off = data is only read at
+      start-up and through the refresh buttons.
+      poll_interval: time between two polling cycles in seconds.
+  additions_status_requests:
+    name: Additional requests and start values
     description: >-
-      Leave empty. Filled automatically (e.g. VenusC) and used as the model
-      name in Home Assistant.
-  local_udp_port:
-    name: Local source port
-    description: >-
-      0 = random port. Some firmware versions only reply to a fixed source
-      port - in that case use the same value as the device UDP port.
-  mqtt_host:
-    name: MQTT broker
-    description: Hostname or IP of the broker. Use core-mosquitto for the Mosquitto add-on.
-  mqtt_port:
-    name: MQTT port
-    description: Broker port, usually 1883.
-  mqtt_username:
-    name: MQTT username
-    description: Broker username. Leave empty for an anonymous connection.
-  mqtt_password:
-    name: MQTT password
-    description: Password for the MQTT user.
-  mqtt_discovery_prefix:
-    name: Discovery prefix
-    description: >-
-      MQTT auto-discovery prefix. Must match the MQTT integration setting,
-      normally homeassistant.
-  mqtt_base_topic:
-    name: Base topic
-    description: >-
-      Root of all state and command topics of this bridge, e.g.
-      Marstek-Bridge-Control/system/state.
-  mqtt_suggested_area:
-    name: Suggested area
-    description: Area Home Assistant suggests when the devices are created.
-  request_delay:
-    name: Delay between requests (s)
-    description: >-
-      Pause between two UDP commands. The battery does not handle parallel
-      requests; 1 second is a good starting point.
-  request_timeout:
-    name: Timeout per attempt (s)
-    description: How long to wait for the reply of a single attempt.
-  request_retries:
-    name: Retries
-    description: >-
-      0 = single attempt, a timeout is discarded and does NOT trigger the
-      watchdog. Greater than 0 = that many retries; if the last attempt also
-      fails, the watchdog is triggered.
-  request_max_time:
-    name: Maximum time per message (s)
-    description: >-
-      Hard limit across all attempts of one message. Exceeding it aborts the
-      request and triggers the watchdog.
-  poll_interval:
-    name: Poll interval (s)
-    description: >-
-      Time between two polling cycles (battery, PV, ES.GetStatus, ES.GetMode
-      and optionally EM).
-  poll_enabled:
-    name: Cyclic polling
-    description: >-
-      Off = data is only read at start-up and when the "Refresh data" button is
-      pressed.
-  enable_em:
-    name: Query energy meter
-    description: >-
-      Additionally query EM.GetStatus and create the "Marstek Energy Meter"
-      device with the CT data.
-  dod_value:
-    name: DOD (%)
-    description: >-
-      Depth of discharge applied at start-up. Valid range 30-88, factory value
+      Optional query plus the values applied once at start-up.
+      enable_em: additionally query EM.GetStatus and create the "Marstek Energy
+      Meter" device with the CT data.
+      dod_value: depth of discharge in percent, valid range 30-88, factory value
       88. Can be changed any time via the number entity.
-  ble_block_enable:
-    name: Bluetooth block at start-up
+      ble_block_enable: enables the Bluetooth block (Ble.Adv) at start-up so the
+      mobile app cannot connect in parallel and cause command conflicts.
+      led_state: LED of the control panel, off = the LED is switched off at
+      start-up.
+  passiv_mode_settings:
+    name: Passive mode
     description: >-
-      Enables the device's Bluetooth block (Ble.Adv) at start-up so the mobile
-      app cannot connect in parallel and cause command conflicts.
-  led_state:
-    name: LED on at start-up
-    description: LED of the control panel. Off = the LED is switched off at start-up.
-  passive_power_min:
-    name: Minimum passive power (W)
+      Limits and start values of the self-consumption control.
+      passive_power_min and passive_power_max: bounds of the number entity in
+      watts. Negative means charging from the grid, positive means feeding in or
+      discharging.
+      passive_power_default: power the entity starts with after a restart.
+      passive_cd_time_max and passive_cd_time_default: countdown in seconds.
+      When it expires the device leaves the passive setpoint again, the docs
+      specify a maximum of 300 seconds.
+      passive_keepalive: re-sends the passive command every cd_time/2 seconds,
+      needed if the setpoint should be held permanently.
+  general_settings:
+    name: General
     description: >-
-      Lower bound of the number entity. Negative values mean charging from the
-      grid, e.g. -1200.
-  passive_power_max:
-    name: Maximum passive power (W)
+      Watchdog and add-on behaviour.
+      watchdog_failure_threshold: number of consecutive watchdog triggers before
+      the health endpoint turns unhealthy and the Supervisor restarts the
+      add-on. Higher values prevent restart loops caused by short outages.
+      persist_device_info: writes the Bluetooth MAC and device type back into
+      this configuration via the Supervisor API once they have been read.
+      health_port: port of the health endpoint (/health and /status) polled by
+      the Supervisor watchdog. Changing it requires adjusting the add-on's
+      watchdog entry.
+  logging:
+    name: Logging
     description: >-
-      Upper bound of the number entity. Positive values mean feeding in or
-      discharging, e.g. 1200.
-  passive_power_default:
-    name: Passive power start value (W)
-    description: Value the number entity starts with after a restart.
-  passive_cd_time_max:
-    name: Maximum countdown (s)
-    description: >-
-      Upper bound for cd_time. When the countdown expires the device leaves the
-      passive setpoint again. The docs specify a maximum of 300 seconds.
-  passive_cd_time_default:
-    name: Countdown start value (s)
-    description: Value the countdown starts with after a restart.
-  passive_keepalive:
-    name: Re-send passive automatically
-    description: >-
-      Re-sends the passive command every cd_time/2 seconds while passive mode
-      is active. Needed if the setpoint should be held permanently.
-  watchdog_failure_threshold:
-    name: Watchdog threshold
-    description: >-
-      Number of consecutive watchdog triggers before the health endpoint turns
-      unhealthy and the Supervisor restarts the add-on. Higher values prevent
-      restart loops caused by short outages.
-  persist_device_info:
-    name: Write device info back
-    description: >-
-      Writes the Bluetooth MAC and device type back into this configuration via
-      the Supervisor API after they have been read for the first time.
-  health_port:
-    name: Health port
-    description: >-
-      Port of the health endpoint (/health and /status) polled by the
-      Supervisor watchdog. Changing it requires adjusting the add-on's watchdog
-      entry.
-  log_level:
-    name: Log level
-    description: >-
-      trace logs every single UDP and MQTT packet, debug every query step, info
-      only the normal flow. All levels are printed in colour.
+      log_level: trace logs every single UDP and MQTT packet, debug every query
+      step, info only the normal flow. All levels are printed in colour.
 network:
   8099/tcp: Health endpoint for the Supervisor watchdog

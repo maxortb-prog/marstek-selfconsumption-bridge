@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.5"
+version: "0.0.6"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -27,68 +27,82 @@ ports_description:
 # mit HTTP 200 antwortet (MQTT getrennt ODER Geraetekommunikation gestoert).
 watchdog: "http://[HOST]:[PORT:8099]/health"
 options:
-  device_ip: "192.168.0.45"
-  device_udp_port: 30000
-  device_ble_mac: ""
-  device_type: ""
-  local_udp_port: 0
-  mqtt_host: "core-mosquitto"
-  mqtt_port: 1883
-  mqtt_username: "mqtt-marstek"
-  mqtt_password: "mqtt-marstek"
-  mqtt_discovery_prefix: "homeassistant"
-  mqtt_base_topic: "Marstek-Bridge-Control"
-  mqtt_suggested_area: "Marstek"
-  request_delay: 1.0
-  request_timeout: 1.0
-  request_retries: 2
-  request_max_time: 10.0
-  poll_interval: 30
-  poll_enabled: true
-  enable_em: false
-  dod_value: 88
-  ble_block_enable: true
-  led_state: false
-  passive_power_min: -1200
-  passive_power_max: 1200
-  passive_power_default: 0
-  passive_cd_time_max: 300
-  passive_cd_time_default: 10
-  passive_keepalive: false
-  watchdog_failure_threshold: 3
-  persist_device_info: true
-  health_port: 8099
-  log_level: "info"
+  marstek_network_settings:
+    device_ip: "192.168.0.45"
+    device_udp_port: 30000
+    device_ble_mac: ""
+    device_type: ""
+    local_udp_port: 0
+  mqtt_settings:
+    mqtt_host: "core-mosquitto"
+    mqtt_port: 1883
+    mqtt_username: "mqtt-marstek"
+    mqtt_password: "mqtt-marstek"
+    mqtt_discovery_prefix: "homeassistant"
+    mqtt_base_topic: "Marstek-Bridge-Control"
+    mqtt_suggested_area: "Marstek"
+  message_settings:
+    request_delay: 1.0
+    request_timeout: 1.0
+    request_retries: 2
+    request_max_time: 10.0
+    poll_enabled: true
+    poll_interval: 30
+  additions_status_requests:
+    enable_em: false
+    dod_value: 88
+    ble_block_enable: true
+    led_state: false
+  passiv_mode_settings:
+    passive_power_min: -1200
+    passive_power_max: 1200
+    passive_power_default: 0
+    passive_cd_time_max: 300
+    passive_cd_time_default: 10
+    passive_keepalive: false
+  general_settings:
+    watchdog_failure_threshold: 3
+    persist_device_info: true
+    health_port: 8099
+  logging:
+    log_level: "info"
 schema:
-  device_ip: str
-  device_udp_port: int(1,65535)
-  device_ble_mac: str?
-  device_type: str?
-  local_udp_port: int(0,65535)
-  mqtt_host: str
-  mqtt_port: int(1,65535)
-  mqtt_username: str?
-  mqtt_password: password?
-  mqtt_discovery_prefix: str
-  mqtt_base_topic: str
-  mqtt_suggested_area: str?
-  request_delay: float(0,60)
-  request_timeout: float(0.1,60)
-  request_retries: int(0,10)
-  request_max_time: float(0.5,300)
-  poll_interval: int(5,3600)
-  poll_enabled: bool
-  enable_em: bool
-  dod_value: int(30,88)
-  ble_block_enable: bool
-  led_state: bool
-  passive_power_min: int(-5000,0)
-  passive_power_max: int(0,5000)
-  passive_power_default: int(-5000,5000)
-  passive_cd_time_max: int(1,3600)
-  passive_cd_time_default: int(0,3600)
-  passive_keepalive: bool
-  watchdog_failure_threshold: int(1,100)
-  persist_device_info: bool
-  health_port: int(1024,65535)
-  log_level: list(trace|debug|info|warning|error)
+  marstek_network_settings:
+    device_ip: str
+    device_udp_port: int(1,65535)
+    device_ble_mac: str?
+    device_type: str?
+    local_udp_port: int(0,65535)
+  mqtt_settings:
+    mqtt_host: str
+    mqtt_port: int(1,65535)
+    mqtt_username: str?
+    mqtt_password: password?
+    mqtt_discovery_prefix: str
+    mqtt_base_topic: str
+    mqtt_suggested_area: str?
+  message_settings:
+    request_delay: float(0,60)
+    request_timeout: float(0.1,60)
+    request_retries: int(0,10)
+    request_max_time: float(0.5,300)
+    poll_enabled: bool
+    poll_interval: int(5,3600)
+  additions_status_requests:
+    enable_em: bool
+    dod_value: int(30,88)
+    ble_block_enable: bool
+    led_state: bool
+  passiv_mode_settings:
+    passive_power_min: int(-5000,0)
+    passive_power_max: int(0,5000)
+    passive_power_default: int(-5000,5000)
+    passive_cd_time_max: int(1,3600)
+    passive_cd_time_default: int(0,3600)
+    passive_keepalive: bool
+  general_settings:
+    watchdog_failure_threshold: int(1,100)
+    persist_device_info: bool
+    health_port: int(1024,65535)
+  logging:
+    log_level: list(trace|debug|info|warning|error)

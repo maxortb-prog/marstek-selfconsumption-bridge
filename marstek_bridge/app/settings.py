@@ -1,4 +1,9 @@
-"""Laden, Validieren und Zurueckschreiben der Add-on Konfiguration."""
+"""Laden, Validieren und Zurueckschreiben der Add-on Konfiguration.
+
+Die Optionen sind in der ``config.yaml`` nach Themen gruppiert. Innerhalb der
+Anwendung wird flach gearbeitet - ``load_settings`` flacht die Gruppen ab,
+``persist_device_info_values`` schreibt in die richtige Gruppe zurueck.
+"""
 
 from __future__ import annotations
 
@@ -15,45 +20,62 @@ OPTIONS_PATH = Path(os.environ.get("MARSTEK_OPTIONS", "/data/options.json"))
 STATE_PATH = Path(os.environ.get("MARSTEK_STATE", "/data/marstek_state.json"))
 SUPERVISOR_URL = "http://supervisor/addons/self/options"
 
+# Gruppenstruktur wie in der config.yaml. Reihenfolge = Reihenfolge in der UI.
+OPTION_GROUPS: dict[str, dict[str, Any]] = {
+    "marstek_network_settings": {
+        "device_ip": "192.168.0.45",
+        "device_udp_port": 30000,
+        "device_ble_mac": "",
+        "device_type": "",
+        "local_udp_port": 0,
+    },
+    "mqtt_settings": {
+        "mqtt_host": "core-mosquitto",
+        "mqtt_port": 1883,
+        "mqtt_username": "mqtt-marstek",
+        "mqtt_password": "mqtt-marstek",
+        "mqtt_discovery_prefix": "homeassistant",
+        "mqtt_base_topic": "Marstek-Bridge-Control",
+        "mqtt_suggested_area": "Marstek",
+    },
+    "message_settings": {
+        "request_delay": 1.0,
+        "request_timeout": 1.0,
+        "request_retries": 2,
+        "request_max_time": 10.0,
+        "poll_enabled": True,
+        "poll_interval": 30,
+    },
+    "additions_status_requests": {
+        "enable_em": False,
+        "dod_value": 88,
+        "ble_block_enable": True,
+        "led_state": False,
+    },
+    "passiv_mode_settings": {
+        "passive_power_min": -1200,
+        "passive_power_max": 1200,
+        "passive_power_default": 0,
+        "passive_cd_time_max": 300,
+        "passive_cd_time_default": 10,
+        "passive_keepalive": False,
+    },
+    "general_settings": {
+        "watchdog_failure_threshold": 3,
+        "persist_device_info": True,
+        "health_port": 8099,
+    },
+    "logging": {
+        "log_level": "info",
+    },
+}
+
+# Flache Sicht auf die Gruppen.
 DEFAULTS: dict[str, Any] = {
-    # Geraet
-    "device_ip": "192.168.0.45",
-    "device_udp_port": 30000,
-    "device_ble_mac": "",
-    "device_type": "",
-    "local_udp_port": 0,
-    # MQTT
-    "mqtt_host": "core-mosquitto",
-    "mqtt_port": 1883,
-    "mqtt_username": "mqtt-marstek",
-    "mqtt_password": "mqtt-marstek",
-    "mqtt_discovery_prefix": "homeassistant",
-    "mqtt_base_topic": "Marstek-Bridge-Control",
-    "mqtt_suggested_area": "Marstek",
-    # Kommunikation
-    "request_delay": 1.0,
-    "request_timeout": 1.0,
-    "request_retries": 2,
-    "request_max_time": 10.0,
-    "poll_interval": 30,
-    "poll_enabled": True,
-    "enable_em": False,
-    # Initialwerte
-    "dod_value": 88,
-    "ble_block_enable": True,
-    "led_state": False,
-    # Passive Mode
-    "passive_power_min": -1200,
-    "passive_power_max": 1200,
-    "passive_power_default": 0,
-    "passive_cd_time_max": 300,
-    "passive_cd_time_default": 10,
-    "passive_keepalive": False,
-    # Betrieb
-    "watchdog_failure_threshold": 3,
-    "persist_device_info": True,
-    "health_port": 8099,
-    "log_level": "info",
+    key: value for group in OPTION_GROUPS.values() for key, value in group.items()
+}
+GROUP_OF: dict[str, str] = {
+    key: group for group, options in OPTION_GROUPS.items() for key in options
 }
 
 _LOGGER = logging.getLogger("marstek.settings")
@@ -152,8 +174,9 @@ class Settings:
         )
 
         if self.persist_device_info:
-            self.raw["device_ble_mac"] = self.device_ble_mac
-            self.raw["device_type"] = self.device_type
+            group = self.raw.setdefault(GROUP_OF["device_ble_mac"], {})
+            group["device_ble_mac"] = self.device_ble_mac
+            group["device_type"] = self.device_type
             _push_options_to_supervisor(self.raw)
 
 
@@ -220,10 +243,28 @@ def _coerce(value: Any, default: Any) -> Any:
     return "" if value is None else str(value)
 
 
+def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
+    """Gruppierte Optionen in eine flache Map ueberfuehren.
+
+    Flach abgelegte Schluessel auf oberster Ebene werden ebenfalls akzeptiert,
+    damit aeltere Konfigurationen weiter funktionieren.
+    """
+    flat: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in OPTION_GROUPS and isinstance(value, dict):
+            flat.update({k: v for k, v in value.items() if k in DEFAULTS})
+        elif key in DEFAULTS:
+            flat[key] = value
+        else:
+            _LOGGER.debug("Unbekannte Option '%s' ignoriert", key)
+    return flat
+
+
 def load_settings() -> Settings:
-    """Optionen laden: Defaults < options.json < ENV (MARSTEK_*)."""
+    """Optionen laden: Defaults < options.json (gruppiert) < ENV (MARSTEK_*)."""
+    raw = _read_json(OPTIONS_PATH)
     merged: dict[str, Any] = dict(DEFAULTS)
-    merged.update(_read_json(OPTIONS_PATH))
+    merged.update(_flatten(raw))
 
     for key in DEFAULTS:
         env_val = os.environ.get(f"MARSTEK_{key.upper()}")
@@ -232,7 +273,7 @@ def load_settings() -> Settings:
 
     clean = {key: _coerce(merged.get(key), DEFAULTS[key]) for key in DEFAULTS}
 
-    settings = Settings(raw=dict(clean))
+    settings = Settings(raw=raw)
     for key, value in clean.items():
         setattr(settings, key, value)
 

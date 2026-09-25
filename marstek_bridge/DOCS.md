@@ -1,8 +1,20 @@
 # Marstek Self-consumption Bridge - Konfiguration
 
-Alle Optionen sind in der Add-on-Oberflaeche mit Namen und Beschreibung
-hinterlegt (`translations/de.yaml`, `translations/en.yaml`). Diese Seite ist
-die ausfuehrliche Referenz dazu.
+Die Optionen sind nach Themen gruppiert:
+
+| Gruppe | Inhalt |
+|---|---|
+| `marstek_network_settings` | Erreichbarkeit des Speichers im LAN |
+| `mqtt_settings` | Broker und Auto-Discovery |
+| `message_settings` | Zeitverhalten der UDP-Kommunikation |
+| `additions_status_requests` | optionale Abfrage und Startwerte |
+| `passiv_mode_settings` | Grenzen und Startwerte des Passive-Modus |
+| `general_settings` | Watchdog und Betrieb |
+| `logging` | Log-Level |
+
+Home Assistant zeigt Name und Beschreibung nur je **Gruppe** an
+(`translations/de.yaml`, `translations/en.yaml`); die Felder darunter erscheinen
+mit ihrem Schluesselnamen. Diese Seite ist die ausfuehrliche Referenz je Feld.
 
 ## Gerät
 

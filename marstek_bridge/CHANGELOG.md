@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.6 - 2026-09-25
+
+**Achtung: geaenderte Konfigurationsstruktur.** Nach dem Update einmal die
+Add-on Konfiguration oeffnen und speichern.
+
+- Optionen sind jetzt nach Themen gruppiert: `marstek_network_settings`,
+  `mqtt_settings`, `message_settings`, `additions_status_requests`,
+  `passiv_mode_settings`, `general_settings`, `logging`.
+- Alte, flach abgelegte Optionen werden beim Laden weiterhin akzeptiert.
+- `ble_mac` und `device_type` werden in die passende Gruppe zurueckgeschrieben.
+
 ## 0.0.5 - 2026-09-25
 
 - Eigener Refresh-Button je Statusgruppe: *Marstek Battery*, *Marstek PV
