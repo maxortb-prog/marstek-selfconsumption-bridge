@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import __version__
-from .const import GROUP_TITLES, GRP_SYSTEM, SELECTABLE_MODES
+from .const import COMM_FAIL, COMM_OK, GROUP_TITLES, GRP_SYSTEM, SELECTABLE_MODES
 
 DIAG = "diagnostic"
 CONF = "config"
@@ -68,7 +68,15 @@ def refresh_button(label: str) -> Ent:
 #                  + DOD / Ble_block / Led_Ctrl + Kommunikationsstatus)
 # ---------------------------------------------------------------------------
 SYSTEM_ENTITIES: list[Ent] = [
-    Ent("communication", "Communication established", icon="mdi:lan-connect"),
+    # device_class "enum" + options: nur so kennt Home Assistant die moeglichen
+    # Zustaende und bietet sie in Automationen im Dropdown an.
+    Ent(
+        "communication",
+        "Communication established",
+        device_class="enum",
+        icon="mdi:lan-connect",
+        extra={"options": [COMM_OK, COMM_FAIL]},
+    ),
     Ent(
         "comm_ok",
         "Device connectivity",

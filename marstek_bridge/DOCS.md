@@ -189,6 +189,22 @@ Marstek-Bridge-Control/energy_meter/refresh/set           PRESS  (nur EM.GetStat
 * Das Aktivieren der Open API kann gerätintern Funktionen deaktivieren, um
   Befehlskonflikte zu vermeiden (siehe Marstek-Doku, Kapitel 2).
 
+## Kommunikationsstatus in Automationen
+
+| Entity | Zustaende | geeignet fuer |
+|---|---|---|
+| `sensor.<...>_system_communication` - *Communication established* | `ON` / `FAIL` | Anzeige, Benachrichtigungstext |
+| `binary_sensor.<...>_system_comm_ok` - *Device connectivity* | `on` / `off` (`device_class: connectivity`) | Bedingungen und Trigger in Automationen |
+
+```yaml
+# Benachrichtigen, sobald der Speicher nicht mehr antwortet
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.marstek_..._system_comm_ok
+    to: "off"
+    for: "00:02:00"
+```
+
 ## Fehlersuche
 
 | Symptom | Ursache / Lösung |

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.9 - 2026-09-26
+
+- Die Entity *Communication established* wird als `enum` mit den Zustaenden
+  `ON` und `FAIL` veroeffentlicht. Home Assistant bietet beide jetzt im
+  Dropdown von Automationen und Bedingungen an, statt nur "Nicht verfuegbar"
+  und "Unbekannt".
+
 ## 0.0.8 - 2026-09-25
 
 - Selbstregelung fuer den Passive-Modus: die Bridge abonniert ein Topic mit
