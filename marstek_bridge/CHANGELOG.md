@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.13 - 2026-09-26
+
+**Fix:** Bei negativem Netzwert (Einspeisung) hat der Regler denselben Fehler
+mehrfach ausgeregelt und den Sollwert dabei bis auf 0 W heruntergezogen, was
+zu einem Aufschaukeln der Regelung fuehrte.
+
+- Totzeit-Kompensation: die zuletzt befohlene Aenderung wird als "in der
+  Messung noch nicht sichtbar" vom Fehler abgezogen und verfaellt linear ueber
+  die neue Option `self_regulation_settle_time` (Standard 10 s).
+- Warnung beim Start, wenn `settle_time` groesser als `min_interval` ist.
+- Neue Option `self_regulation_min_interval_down` (Standard 5 s): auch ein
+  Fast-Down haelt einen Mindestabstand ein. Uebersprungen werden weiterhin das
+  Totband und der laengere Aufwaerts-Takt.
+
 ## 0.0.12 - 2026-09-26
 
 - Jede empfangene MQTT-Regelnachricht wird auf Log-Level `info` protokolliert,

@@ -87,6 +87,17 @@ configuration:
       loesen kein neues Kommando aus. Gilt nur beim Hochregeln.
       self_regulation_min_interval: minimaler Abstand zwischen zwei
       Regelbefehlen in Sekunden. Gilt nur beim Hochregeln.
+      self_regulation_min_interval_down: minimaler Abstand beim Runterregeln.
+      Deutlich kuerzer als der Wert nach oben, verhindert aber, dass jede
+      eingehende Nachricht einen weiteren Schritt ausloest, bevor die vorige
+      Korrektur ueberhaupt messbar ist.
+      self_regulation_settle_time: Totzeit in Sekunden zwischen einem Kommando
+      und dem Zeitpunkt, an dem sich seine Wirkung vollstaendig in der Messung
+      zeigt. Die Bridge rechnet den noch nicht sichtbaren Teil aus dem Fehler
+      heraus, sonst regelt sie denselben Fehler mehrfach aus und schiesst
+      ueber. Richtwert: Reaktionszeit des Speichers plus Mittelungsfenster des
+      Sensors. Sollte nicht groesser sein als min_interval, sonst ueberlagern
+      sich zwei Kommandos in der Kompensation. 0 = aus.
       self_regulation_step_gain: Anteil der Abweichung, der beim Hochregeln pro
       Schritt ausgeglichen wird. 0.5 = die Haelfte, wodurch der Regler sich dem
       Ziel annaehert statt ueberzuschiessen.

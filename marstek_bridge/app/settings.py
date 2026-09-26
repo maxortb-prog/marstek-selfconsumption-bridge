@@ -66,6 +66,8 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_reserve": 12,
         "self_regulation_deadband": 10,
         "self_regulation_min_interval": 5.0,
+        "self_regulation_min_interval_down": 5.0,
+        "self_regulation_settle_time": 10.0,
         "self_regulation_step_gain": 0.5,
         "self_regulation_step_up": 50,
         "self_regulation_step_down": 0,
@@ -144,6 +146,8 @@ class Settings:
     self_regulation_reserve: int = 12
     self_regulation_deadband: int = 10
     self_regulation_min_interval: float = 5.0
+    self_regulation_min_interval_down: float = 5.0
+    self_regulation_settle_time: float = 10.0
     self_regulation_step_gain: float = 0.5
     self_regulation_step_up: int = 50
     self_regulation_step_down: int = 0

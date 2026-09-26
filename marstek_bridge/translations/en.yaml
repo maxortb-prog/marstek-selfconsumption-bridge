@@ -85,6 +85,17 @@ configuration:
       not trigger a new command. Applies to upward steps only.
       self_regulation_min_interval: minimum time between two control commands
       in seconds. Applies to upward steps only.
+      self_regulation_min_interval_down: minimum time between downward steps.
+      Much shorter than the upward value, but it prevents every incoming
+      message from triggering another step before the previous correction is
+      even measurable.
+      self_regulation_settle_time: dead time in seconds between a command and
+      the moment its effect is fully visible in the measurement. The bridge
+      subtracts the not-yet-visible part from the error, otherwise it corrects
+      the same error several times and overshoots. Rule of thumb: reaction time
+      of the battery plus the averaging window of the sensor. Should not exceed
+      min_interval, otherwise two commands overlap in the compensation. 0 =
+      off.
       self_regulation_step_gain: fraction of the deviation compensated per
       upward step. 0.5 = half of it, so the controller approaches the target
       instead of overshooting.

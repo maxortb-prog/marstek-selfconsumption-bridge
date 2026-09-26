@@ -77,6 +77,10 @@ class Bridge:
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
         self._last_regulation_input: float | None = None
+        # Zuletzt befohlene Aenderung, die sich in der Messung noch nicht
+        # niedergeschlagen hat (Totzeit von Geraet und Sensor).
+        self._unseen_delta = 0.0
+        self._unseen_since = 0.0
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -166,6 +170,20 @@ class Bridge:
                 self.s.self_regulation_step_up,
                 "ungebremst" if self.s.self_regulation_step_down <= 0
                 else f"max {self.s.self_regulation_step_down} W",
+            )
+
+        if (
+            self.s.self_regulation_enabled
+            and 0 < self.s.self_regulation_min_interval < self.s.self_regulation_settle_time
+        ):
+            _LOGGER.warning(
+                "self_regulation_settle_time (%.0fs) ist groesser als "
+                "self_regulation_min_interval (%.0fs) - aufeinanderfolgende "
+                "Kommandos ueberlagern sich in der Totzeit-Kompensation und der "
+                "Regler korrigiert zu stark nach unten. Empfehlung: "
+                "settle_time <= min_interval",
+                self.s.self_regulation_settle_time,
+                self.s.self_regulation_min_interval,
             )
 
         if not self._connect_mqtt_blocking():
@@ -669,6 +687,33 @@ class Bridge:
         self._pending_regulation = value
         self._flush_regulation()
 
+    def _unseen_effect(self) -> float:
+        """Noch nicht sichtbarer Anteil der zuletzt befohlenen Aenderung.
+
+        Zwischen Kommando und Messwert liegt eine Totzeit: das Geraet braucht
+        einen Moment, und der gemittelte Sensor noch laenger. Ohne Korrektur
+        wuerde der Regler denselben Fehler mehrfach ausregeln und dabei massiv
+        ueberschiessen. Der Anteil verfaellt linear ueber
+        ``self_regulation_settle_time``.
+        """
+        settle = self.s.self_regulation_settle_time
+        if settle <= 0 or self._unseen_delta == 0.0:
+            return 0.0
+        age = time.monotonic() - self._unseen_since
+        if age >= settle:
+            self._unseen_delta = 0.0
+            return 0.0
+        return self._unseen_delta * (1.0 - age / settle)
+
+    def _note_commanded_change(self, delta: float) -> None:
+        """Eine gerade gesendete Sollwertaenderung als 'noch unsichtbar' merken."""
+        if self.s.self_regulation_settle_time <= 0:
+            return
+        # Ein noch offener Rest wird mitgenommen, falls zwei Kommandos kurz
+        # hintereinander gehen.
+        self._unseen_delta = self._unseen_effect() + delta
+        self._unseen_since = time.monotonic()
+
     def _compute_regulation_output(self, value: float) -> int:
         """Aus der Netzleistung den naechsten Sollwert berechnen.
 
@@ -685,11 +730,15 @@ class Bridge:
         *Passive power*. Da immer der bereits begrenzte Sollwert die Basis des
         naechsten Schritts ist, kann der Regler nicht ueber den Deckel
         hinauslaufen (kein Windup).
+
+        Vom Fehler wird ausserdem der Teil der zuletzt befohlenen Aenderung
+        abgezogen, der sich in der Messung noch nicht zeigen kann - siehe
+        ``_unseen_effect``.
         """
         ctrl = self.states[GRP_ENERGY_CONTROL]
         cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
         base = int(ctrl.get("regulation_output") or 0)
-        error = value - self.s.self_regulation_reserve
+        error = value - self.s.self_regulation_reserve - self._unseen_effect()
 
         if error > 0:
             step = min(error * self.s.self_regulation_step_gain,
@@ -720,11 +769,15 @@ class Bridge:
         going_down = last is not None and out < int(last)
         fast = going_down and self.s.self_regulation_fast_down
 
-        if not fast:
-            if (
-                time.monotonic() - self._last_regulation_send
-                < self.s.self_regulation_min_interval
-            ):
+        # Auch ein Fast-Down haelt einen (kuerzeren) Mindestabstand ein. Ohne
+        # ihn wuerde jede eingehende Nachricht einen weiteren Schritt ausloesen,
+        # bevor die vorige Korrektur ueberhaupt messbar ist.
+        since_send = time.monotonic() - self._last_regulation_send
+        if fast:
+            if since_send < self.s.self_regulation_min_interval_down:
+                return  # Wert bleibt vorgemerkt
+        else:
+            if since_send < self.s.self_regulation_min_interval:
                 return  # Wert bleibt vorgemerkt und wird spaeter gesendet
             if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
                 self._pending_regulation = None
@@ -748,6 +801,7 @@ class Bridge:
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
             self._last_regulation_send = time.monotonic()
+            self._note_commanded_change(float(out - (last if last is not None else 0)))
 
     def _check_regulation_timeout(self) -> None:
         """Bei ausbleibenden Werten auf 0 W zurueckfallen.
@@ -775,11 +829,13 @@ class Bridge:
             timeout,
             self.regulation_topic,
         )
+        previous = int(current)
         ctrl["regulation_output"] = 0
         self._pending_regulation = None
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
             self._last_regulation_send = time.monotonic()
+            self._note_commanded_change(float(-previous))
 
     # =================================================================
     # MQTT-Kommandos

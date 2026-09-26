@@ -87,6 +87,8 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_reserve` | `12` | Ziel-Netzbezug in Watt, auf den geregelt wird. |
 | `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln). |
 | `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
+| `self_regulation_min_interval_down` | `5.0` | Minimaler Abstand beim Runterregeln. |
+| `self_regulation_settle_time` | `10.0` | Totzeit, über die eine gesendete Änderung als „in der Messung noch nicht sichtbar" gilt. `0` = aus. |
 | `self_regulation_step_gain` | `0.5` | Anteil der Abweichung pro Schritt nach oben. |
 | `self_regulation_step_up` | `50` | Harte Obergrenze eines Schritts nach oben in Watt. |
 | `self_regulation_step_down` | `0` | Begrenzung nach unten in Watt, `0` = unbegrenzt. |
@@ -110,7 +112,7 @@ positiv, Einspeisung negativ) und regelt sie auf `self_regulation_reserve`
 ein - typisch 10-15 W, damit der Bezug nie ins Negative kippt.
 
 ```
-Abweichung = Netzwert − Reserve
+Abweichung = Netzwert − Reserve − Δ_unsichtbar
 
 Abweichung > 0  (zu viel Bezug)   → Schritt = min(Abweichung × step_gain, step_up)
 Abweichung < 0  (zu wenig Bezug)  → Schritt = Abweichung   (voll, ungebremst)
@@ -135,6 +137,21 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   weder ins Netz eingespeist noch aus dem Netz geladen.
 * **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der
   Regler kann sich nicht über den Deckel hinaus aufsummieren.
+* **Totzeit-Kompensation.** Zwischen Kommando und Messwert vergeht Zeit: der
+  Speicher braucht einen Moment, ein gemittelter Sensor deutlich länger. Ohne
+  Korrektur sieht der Regler seine eigene, gerade abgeschickte Änderung noch
+  nicht und regelt denselben Fehler mehrfach aus - das Ergebnis ist ein
+  massives Überschießen und anschließendes Schwingen. Die Bridge merkt sich
+  deshalb die zuletzt befohlene Änderung Δ und zieht den noch nicht sichtbaren
+  Anteil vom Fehler ab. Er verfällt linear über `self_regulation_settle_time`.
+  Richtwert für diese Zeit: Reaktionszeit des Speichers plus Mittelungsfenster
+  des Sensors, typisch 10-20 Sekunden. **`settle_time` sollte nicht größer sein
+  als `min_interval`** - sonst überlagern sich zwei aufeinanderfolgende
+  Kommandos in der Kompensation und der Regler korrigiert zu stark nach unten.
+  Die Bridge warnt beim Start, wenn das der Fall ist.
+* **Takt nach unten.** Auch ein Fast-Down hält `min_interval_down` (Standard
+  5 s) ein. Übersprungen werden nur das Totband und der längere
+  Aufwärts-Takt.
 * **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert alle
   `cd_time/2` Sekunden erneut und startet damit den Countdown des Geräts neu.
   Bleiben Werte länger als `self_regulation_input_timeout` aus (HA-Neustart,
