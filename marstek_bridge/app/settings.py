@@ -63,10 +63,14 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "passive_keepalive": False,
         "self_regulation_enabled": False,
         "self_regulation_topic": "",
-        "self_regulation_mode": "setpoint",
         "self_regulation_reserve": 12,
         "self_regulation_deadband": 10,
-        "self_regulation_min_interval": 2.0,
+        "self_regulation_min_interval": 5.0,
+        "self_regulation_step_gain": 0.5,
+        "self_regulation_step_up": 50,
+        "self_regulation_step_down": 0,
+        "self_regulation_fast_down": True,
+        "self_regulation_input_timeout": 60,
     },
     "general_settings": {
         "watchdog_failure_threshold": 3,
@@ -137,10 +141,14 @@ class Settings:
     passive_keepalive: bool = False
     self_regulation_enabled: bool = False
     self_regulation_topic: str = ""
-    self_regulation_mode: str = "setpoint"
     self_regulation_reserve: int = 12
     self_regulation_deadband: int = 10
-    self_regulation_min_interval: float = 2.0
+    self_regulation_min_interval: float = 5.0
+    self_regulation_step_gain: float = 0.5
+    self_regulation_step_up: int = 50
+    self_regulation_step_down: int = 0
+    self_regulation_fast_down: bool = True
+    self_regulation_input_timeout: int = 60
 
     # -- Betrieb -----------------------------------------------------------
     watchdog_failure_threshold: int = 3

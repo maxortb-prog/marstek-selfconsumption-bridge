@@ -83,11 +83,15 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
-| `self_regulation_topic` | *(leer)* | Topic des gefilterten Regelwerts. Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
-| `self_regulation_mode` | `setpoint` | `setpoint` = Wert ist der fertige Sollwert und wird direkt übernommen. `grid` = Wert ist die Netzleistung und wird auf den bisherigen Sollwert aufsummiert. |
-| `self_regulation_reserve` | `12` | Reserve in Watt, die abgezogen wird, damit der Netzbezug leicht positiv bleibt. |
-| `self_regulation_deadband` | `10` | Änderungen kleiner als dieser Wert lösen kein neues Kommando aus. |
-| `self_regulation_min_interval` | `2.0` | Minimaler Abstand zwischen zwei Regelbefehlen in Sekunden. |
+| `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
+| `self_regulation_reserve` | `12` | Ziel-Netzbezug in Watt, auf den geregelt wird. |
+| `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln). |
+| `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
+| `self_regulation_step_gain` | `0.5` | Anteil der Abweichung pro Schritt nach oben. |
+| `self_regulation_step_up` | `50` | Harte Obergrenze eines Schritts nach oben in Watt. |
+| `self_regulation_step_down` | `0` | Begrenzung nach unten in Watt, `0` = unbegrenzt. |
+| `self_regulation_fast_down` | `true` | Runterregeln überspringt Totband und Mindestabstand. |
+| `self_regulation_input_timeout` | `60` | Sekunden ohne Wert bis Rückfall auf 0 W, `0` = aus. |
 
 ## Betrieb
 
@@ -101,95 +105,92 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 
 ## Selbstregelung im Passive-Modus
 
-Die Bridge lauscht auf einem Topic mit dem gefilterten Regelwert und leitet
-daraus die Leistung des Passive-Kommandos ab.
+Die Bridge erwartet auf `self_regulation_topic` die **Netzleistung** (Bezug
+positiv, Einspeisung negativ) und regelt sie auf `self_regulation_reserve`
+ein - typisch 10-15 W, damit der Bezug nie ins Negative kippt.
 
 ```
-Ausgang = clamp( f(Regelwert) - Reserve , 0 , "Passive power" )
+Abweichung = Netzwert − Reserve
+
+Abweichung > 0  (zu viel Bezug)   → Schritt = min(Abweichung × step_gain, step_up)
+Abweichung < 0  (zu wenig Bezug)  → Schritt = Abweichung   (voll, ungebremst)
+
+Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
 ```
 
+Die Regelung ist bewusst **asymmetrisch**: Hochregeln kann überschießen und
+damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
+
+* **Nach oben gebremst.** Pro Schritt wird nur `step_gain` (Standard 0,5) der
+  Abweichung ausgeglichen, höchstens aber `step_up` Watt. Der Regler nähert
+  sich dem Ziel an, statt darüber hinauszuschießen.
+* **Nach unten sofort.** Der volle Betrag wird in einem Schritt korrigiert. Ein
+  Lastabfall von 500 auf 50 W zieht den Sollwert in einem Zug herunter.
+* **Fast-Down.** Mit `self_regulation_fast_down` überspringt ein Schritt nach
+  unten sowohl Totband als auch Mindestabstand - sonst würde nach einem
+  Lastabfall bis zu `min_interval` Sekunden lang zu viel eingespeist.
 * **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
-  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel. Steht sie
-  auf 300 W, werden aus einem Regelwert von 400 W trotzdem nur 300 W.
-* **Untergrenze** ist fest 0 W. Der Ausgang wird nie negativ, es wird also
+  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel.
+* **Untergrenze** ist fest 0 W. Der Sollwert wird nie negativ, es wird also
   weder ins Netz eingespeist noch aus dem Netz geladen.
-* **Reserve** (`self_regulation_reserve`, Standard 12 W) wird abgezogen, damit
-  der Netzbezug leicht im positiven Bereich bleibt statt auf 0 zu kippen.
-* **Modus** (`self_regulation_mode`):
-  * `setpoint` - der empfangene Wert ist bereits der gewünschte Sollwert des
-    Speichers (z. B. in HA aus Last minus PV gerechnet) und wird direkt
-    übernommen.
-  * `grid` - der empfangene Wert ist die Netzleistung (Bezug positiv). Der neue
-    Sollwert ist `alter Sollwert + Netzwert - Reserve`. Diese Variante regelt
-    sich selbst ein und ist die richtige Wahl, wenn der Wert direkt vom
-    Zähler kommt.
-* **Kein neuer Wert?** Der Keepalive sendet den zuletzt berechneten Wert alle
+* **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der
+  Regler kann sich nicht über den Deckel hinaus aufsummieren.
+* **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert alle
   `cd_time/2` Sekunden erneut und startet damit den Countdown des Geräts neu.
-  Bei aktiver Selbstregelung läuft er unabhängig von `passive_keepalive`.
+  Bleiben Werte länger als `self_regulation_input_timeout` aus (HA-Neustart,
+  Automation deaktiviert, Sensor tot), fällt der Sollwert auf 0 W.
 * **Voraussetzung:** Der Modus *Passive* muss über Select und Apply-Button
   aktiv sein. Solange ein anderer Modus läuft, wird der Regelwert nur
   gespeichert und angezeigt.
 
+Beispiel mit Reserve 12 W, Deckel 600 W, Standardparametern:
+
+| Netz | Sollwert alt | | Sollwert neu |
+|---|---|---|---|
+| 512 W | 0 | halbe Abweichung, gedeckelt auf 50 | 50 W |
+| 512 W | 50 | ebenso | 100 W |
+| … | … | neun Schritte à 50 W | 450 W |
+| 62 W | 450 | halbe Abweichung = 25 | 475 W |
+| 12 W | 497 | Ziel erreicht | 497 W |
+| −450 W | 497 | voller Betrag, sofort | 35 W |
+
 Payload-Formate: eine reine Zahl (`415` oder `415.7`) oder JSON mit einem der
 Schlüssel `value`, `state`, `power`, `p`.
 
-Beispiel-Automation, die einen gefilterten Sensor weiterreicht:
+Beispiel-Automation:
 
 ```yaml
-- trigger:
-    - platform: state
-      entity_id: sensor.grid_power_filtered
-  action:
-    - service: mqtt.publish
-      data:
-        topic: Marstek-Bridge-Control/energy_control/regulation_input
-        payload: "{{ states('sensor.grid_power_filtered') }}"
+alias: Publish MQTT Marstek Regelwert
+triggers:
+  - trigger: state
+    entity_id: sensor.phase_c_average
+  - trigger: time_pattern
+    seconds: /5
+conditions:
+  - condition: template
+    value_template: >-
+      {{ states('sensor.phase_c_average') not in
+         ['unknown', 'unavailable', 'none', ''] }}
+  - condition: state
+    entity_id: sensor.marstek_..._system_communication
+    state: "ON"
+actions:
+  - action: mqtt.publish
+    data:
+      topic: marstek/average_phaseC
+      payload: "{{ states('sensor.phase_c_average') | float(0) | round(0) }}"
+      qos: 0
+      retain: false
+mode: single
 ```
+
+Zur Glättung der Quelle: Ein kurzes Mittel (etwa 5 Sekunden) reicht, weil die
+Bridge nach oben ohnehin dämpft. Ein längeres Fenster verzögert nur die
+Reaktion auf Lastabfälle, also genau das, was schnell gehen soll.
 
 Neue Entities im Gerät *Marstek Energy Control*: Switch **Self-regulation**,
 Sensor **Regulation input** (zuletzt empfangen) und Sensor **Regulation output**
 (zuletzt gesendet).
-
-## MQTT-Topics
-
-```
-Marstek-Bridge-Control/status                       online | offline
-Marstek-Bridge-Control/system/state                 JSON
-Marstek-Bridge-Control/battery/state                JSON
-Marstek-Bridge-Control/pv/state                     JSON
-Marstek-Bridge-Control/energy_status/state          JSON
-Marstek-Bridge-Control/energy_mode/state            JSON
-Marstek-Bridge-Control/energy_control/state         JSON
-Marstek-Bridge-Control/energy_meter/state           JSON
-
-Marstek-Bridge-Control/system/dod/set                     30..88
-Marstek-Bridge-Control/system/ble_block/set               ON | OFF
-Marstek-Bridge-Control/system/led/set                     ON | OFF
-Marstek-Bridge-Control/energy_control/mode/set            Auto|AI|Passive|UPS
-Marstek-Bridge-Control/energy_control/passive_power/set   W
-Marstek-Bridge-Control/energy_control/passive_cd_time/set s
-Marstek-Bridge-Control/energy_control/self_regulation/set ON | OFF
-Marstek-Bridge-Control/energy_control/regulation_input    W  (Regelwert, konfigurierbar)
-Marstek-Bridge-Control/energy_control/apply/set           PRESS
-Marstek-Bridge-Control/energy_control/refresh/set         PRESS  (alle Gruppen)
-Marstek-Bridge-Control/battery/refresh/set                PRESS  (nur Bat.GetStatus)
-Marstek-Bridge-Control/pv/refresh/set                     PRESS  (nur PV.GetStatus)
-Marstek-Bridge-Control/energy_status/refresh/set          PRESS  (nur ES.GetStatus)
-Marstek-Bridge-Control/energy_mode/refresh/set            PRESS  (nur ES.GetMode)
-Marstek-Bridge-Control/energy_meter/refresh/set           PRESS  (nur EM.GetStatus)
-```
-
-## Hinweise
-
-* Der UPS-Modus wird fest als `"UPS"` gesendet (wie im Doku-Beispiel), auch
-  wenn die Modus-Liste im Text `Ups` schreibt.
-
-* `Manual` ist absichtlich nicht im Select: der Modus braucht Zeitfenster
-  (`time_num`, `start_time`, `end_time`, `week_set`) und folgt später.
-* `input_energy` / `output_energy` werden laut Doku mit 0,1 multipliziert und
-  als Wh veröffentlicht.
-* Das Aktivieren der Open API kann gerätintern Funktionen deaktivieren, um
-  Befehlskonflikte zu vermeiden (siehe Marstek-Doku, Kapitel 2).
 
 ## Eigener PV-Energiezähler
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.11 - 2026-09-26
+
+**Achtung:** `self_regulation_mode` entfaellt. Die Regelung arbeitet jetzt
+immer mit der Netzleistung als Eingang.
+
+- Asymmetrische Regelung: nach oben gebremst (Anteil der Abweichung ueber
+  `self_regulation_step_gain`, hoechstens `self_regulation_step_up` Watt),
+  nach unten in voller Hoehe.
+- `self_regulation_fast_down`: ein Schritt nach unten ueberspringt Totband und
+  Mindestabstand, damit ein Lastabfall sofort ausgeregelt wird.
+- `self_regulation_step_down` begrenzt bei Bedarf auch die Absenkung.
+- `self_regulation_input_timeout` (Standard 60 s): bleiben Regelwerte aus,
+  faellt der Sollwert auf 0 W statt vom Keepalive endlos weitergesendet zu
+  werden.
+- `self_regulation_min_interval` Standard von 2 auf 5 Sekunden erhoeht.
+
 ## 0.0.10 - 2026-09-26
 
 - Eigener PV-Energiezaehler **PV energy (calculated)** im Geraet *Marstek

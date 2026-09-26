@@ -76,19 +76,31 @@ configuration:
       self_regulation_enabled: Startzustand der Selbstregelung. Ist sie aktiv,
       wird die gesendete Leistung aus dem MQTT-Regelwert berechnet und die
       Number-Entity "Passive power" dient nur noch als Obergrenze.
-      self_regulation_topic: Topic des gefilterten Regelwerts. Leer = das Topic
+      self_regulation_topic: Topic des Regelwerts, erwartet wird die
+      Netzleistung mit Bezug positiv. Leer = das Topic
       <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
       Zahl oder JSON mit value, state, power.
-      self_regulation_mode: setpoint = der Wert ist bereits der gewünschte
-      Sollwert des Speichers und wird direkt übernommen. grid = der Wert ist die
-      Netzleistung und wird auf den bisherigen Sollwert aufsummiert.
-      self_regulation_reserve: Reserve in Watt, die vom Regelwert abgezogen
-      wird, damit der Netzbezug leicht positiv bleibt und nicht eingespeist
-      wird. Übliche Werte 10-15 W.
-      self_regulation_deadband: Änderungen kleiner als dieser Wert in Watt
-      lösen kein neues Kommando aus.
-      self_regulation_min_interval: minimaler Abstand zwischen zwei Regelbefehlen
-      in Sekunden.
+      self_regulation_reserve: Ziel-Netzbezug in Watt. Der Regler haelt den
+      Bezug auf diesem Wert, damit er nicht ins Negative kippt und ins Netz
+      eingespeist wird. Uebliche Werte 10-15 W.
+      self_regulation_deadband: Abweichungen kleiner als dieser Wert in Watt
+      loesen kein neues Kommando aus. Gilt nur beim Hochregeln.
+      self_regulation_min_interval: minimaler Abstand zwischen zwei
+      Regelbefehlen in Sekunden. Gilt nur beim Hochregeln.
+      self_regulation_step_gain: Anteil der Abweichung, der beim Hochregeln pro
+      Schritt ausgeglichen wird. 0.5 = die Haelfte, wodurch der Regler sich dem
+      Ziel annaehert statt ueberzuschiessen.
+      self_regulation_step_up: harte Obergrenze eines Schritts nach oben in
+      Watt. Bremst den Anstieg zusaetzlich zum step_gain.
+      self_regulation_step_down: Begrenzung eines Schritts nach unten in Watt.
+      0 = unbegrenzt, damit ein ploetzlicher Lastabfall sofort ausgeregelt
+      wird.
+      self_regulation_fast_down: beim Runterregeln Totband und Mindestabstand
+      ueberspringen. Sollte aktiv bleiben, sonst wird nach einem Lastabfall bis
+      zu min_interval Sekunden lang zu viel eingespeist.
+      self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
+      der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
+      HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.
   general_settings:
     name: Allgemein
     description: >-

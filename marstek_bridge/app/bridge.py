@@ -76,6 +76,7 @@ class Bridge:
         self._last_poll = 0.0
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
+        self._last_regulation_input: float | None = None
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -157,10 +158,14 @@ class Bridge:
 
         if self.s.self_regulation_enabled:
             _LOGGER.info(
-                "Selbstregelung aktiv (%s) - Eingangstopic '%s', Reserve %s W",
-                self.s.self_regulation_mode,
+                "Selbstregelung aktiv - Topic '%s', Reserve %s W, "
+                "Schritt hoch %.0f%% / max %s W, runter %s",
                 self.regulation_topic,
                 self.s.self_regulation_reserve,
+                self.s.self_regulation_step_gain * 100,
+                self.s.self_regulation_step_up,
+                "ungebremst" if self.s.self_regulation_step_down <= 0
+                else f"max {self.s.self_regulation_step_down} W",
             )
 
         if not self._connect_mqtt_blocking():
@@ -622,6 +627,7 @@ class Bridge:
             return
         ctrl = self.states[GRP_ENERGY_CONTROL]
         ctrl["regulation_input"] = round(value, 1)
+        self._last_regulation_input = time.monotonic()
         self._publish_state(GRP_ENERGY_CONTROL)
 
         if not self._regulation_active():
@@ -636,57 +642,117 @@ class Bridge:
         self._flush_regulation()
 
     def _compute_regulation_output(self, value: float) -> int:
-        """Regelwert auf die zu sendende Leistung abbilden.
+        """Aus der Netzleistung den naechsten Sollwert berechnen.
 
-        Die Number-Entity "Passive power" ist dabei die Obergrenze, die Reserve
-        haelt den Netzbezug leicht im positiven Bereich, und nach unten wird bei
-        0 W begrenzt - es wird also nie ins Netz eingespeist oder aus dem Netz
-        geladen.
+        Der Regelkreis arbeitet bewusst asymmetrisch:
+
+        * **hoch** (zu viel Netzbezug) wird gebremst - pro Schritt nur ein
+          Anteil der Abweichung (``step_gain``) und hoechstens ``step_up`` Watt.
+          Ein zu grosser Sprung nach oben wuerde ueberschiessen und damit
+          Einspeisung ins Netz verursachen.
+        * **runter** (zu wenig Netzbezug) geschieht in voller Hoehe, weil das
+          immer die sichere Richtung ist.
+
+        Nach unten wird bei 0 W begrenzt, nach oben durch die Number-Entity
+        *Passive power*. Da immer der bereits begrenzte Sollwert die Basis des
+        naechsten Schritts ist, kann der Regler nicht ueber den Deckel
+        hinauslaufen (kein Windup).
         """
         ctrl = self.states[GRP_ENERGY_CONTROL]
         cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
-        reserve = self.s.self_regulation_reserve
+        base = int(ctrl.get("regulation_output") or 0)
+        error = value - self.s.self_regulation_reserve
 
-        if self.s.self_regulation_mode == "grid":
-            base = int(ctrl.get("regulation_output") or 0)
-            target = base + value - reserve
+        if error > 0:
+            step = min(error * self.s.self_regulation_step_gain,
+                       float(self.s.self_regulation_step_up))
         else:
-            target = value - reserve
-        return int(max(0, min(cap, round(target))))
+            step = error
+            if self.s.self_regulation_step_down > 0:
+                step = max(step, -float(self.s.self_regulation_step_down))
+
+        return int(max(0, min(cap, round(base + step))))
 
     def _flush_regulation(self) -> None:
-        """Ausstehenden Regelwert senden, sofern Takt und Totband es zulassen."""
+        """Ausstehenden Regelwert senden.
+
+        Ein Schritt nach unten darf Totband und Mindestabstand ueberspringen
+        (``self_regulation_fast_down``), damit auf einen plotzlichen Lastabfall
+        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv.
+        """
         if self._pending_regulation is None or not self._regulation_active():
             return
         ctrl = self.states[GRP_ENERGY_CONTROL]
         if ctrl.get("applied_mode") != MODE_PASSIVE:
             return
-        if time.monotonic() - self._last_regulation_send < self.s.self_regulation_min_interval:
-            return
 
         value = self._pending_regulation
-        self._pending_regulation = None
         out = self._compute_regulation_output(value)
         last = ctrl.get("regulation_output")
+        going_down = last is not None and out < int(last)
+        fast = going_down and self.s.self_regulation_fast_down
 
-        if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
-            _LOGGER.trace(
-                "Regelwert %.1f W -> %s W innerhalb des Totbands (%s W), nicht gesendet",
-                value,
-                out,
-                self.s.self_regulation_deadband,
-            )
-            return
+        if not fast:
+            if (
+                time.monotonic() - self._last_regulation_send
+                < self.s.self_regulation_min_interval
+            ):
+                return  # Wert bleibt vorgemerkt und wird spaeter gesendet
+            if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
+                self._pending_regulation = None
+                _LOGGER.trace(
+                    "Regelwert %.1f W -> %s W innerhalb des Totbands (%s W), "
+                    "nicht gesendet",
+                    value,
+                    out,
+                    self.s.self_regulation_deadband,
+                )
+                return
 
+        self._pending_regulation = None
         ctrl["regulation_output"] = out
         _LOGGER.info(
-            "Selbstregelung: Eingang %.1f W -> Ausgang \033[1m%s W\033[0m "
-            "(Reserve %s W, Deckel %s W)",
+            "Selbstregelung %s: Netz %.1f W (Ziel %s W) | Sollwert %s -> "
+            "\033[1m%s W\033[0m (Deckel %s W)",
+            "RUNTER" if going_down else "hoch",
             value,
-            out,
             self.s.self_regulation_reserve,
+            last if last is not None else 0,
+            out,
             max(0, int(ctrl.get("passive_power", 0))),
         )
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if self._apply_mode(refresh=False):
+            self._last_regulation_send = time.monotonic()
+
+    def _check_regulation_timeout(self) -> None:
+        """Bei ausbleibenden Werten auf 0 W zurueckfallen.
+
+        Ohne das wuerde der Keepalive den zuletzt berechneten Sollwert endlos
+        weitersenden, obwohl niemand mehr misst - etwa nach einem HA-Neustart
+        oder wenn die publizierende Automation deaktiviert wurde.
+        """
+        timeout = self.s.self_regulation_input_timeout
+        if timeout <= 0 or not self._regulation_active():
+            return
+        if self._last_regulation_input is None:
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return
+        current = ctrl.get("regulation_output")
+        if current is None or int(current) == 0:
+            return
+        if time.monotonic() - self._last_regulation_input < timeout:
+            return
+
+        _LOGGER.warning(
+            "Seit %ss kein Regelwert auf '%s' - Sollwert wird auf 0 W gesetzt",
+            timeout,
+            self.regulation_topic,
+        )
+        ctrl["regulation_output"] = 0
+        self._pending_regulation = None
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
             self._last_regulation_send = time.monotonic()
@@ -790,6 +856,7 @@ class Bridge:
             self._poll()
 
         self._flush_regulation()
+        self._check_regulation_timeout()
         self._passive_keepalive()
         self._sleep(0.2)
 

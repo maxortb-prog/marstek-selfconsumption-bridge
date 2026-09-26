@@ -74,19 +74,31 @@ configuration:
       self_regulation_enabled: initial state of the self-regulation. While
       active, the power sent is derived from the MQTT control value and the
       "Passive power" number entity only acts as the upper limit.
-      self_regulation_topic: topic of the filtered control value. Empty = the
-      topic <mqtt_base_topic>/energy_control/regulation_input. Accepts a plain
-      number or JSON with value, state, power.
-      self_regulation_mode: setpoint = the value already is the desired battery
-      setpoint and is used directly. grid = the value is the grid power and is
-      added to the previous setpoint.
-      self_regulation_reserve: reserve in watts subtracted from the control
-      value so grid import stays slightly positive instead of exporting. Typical
-      values are 10-15 W.
-      self_regulation_deadband: changes smaller than this value in watts do not
-      trigger a new command.
-      self_regulation_min_interval: minimum time between two control commands in
-      seconds.
+      self_regulation_topic: topic of the control value, expected to be the
+      grid power with import positive. Empty = the topic
+      <mqtt_base_topic>/energy_control/regulation_input. Accepts a plain number
+      or JSON with value, state, power.
+      self_regulation_reserve: target grid import in watts. The controller
+      holds the import at this value so it never turns negative and exports to
+      the grid. Typical values are 10-15 W.
+      self_regulation_deadband: deviations smaller than this value in watts do
+      not trigger a new command. Applies to upward steps only.
+      self_regulation_min_interval: minimum time between two control commands
+      in seconds. Applies to upward steps only.
+      self_regulation_step_gain: fraction of the deviation compensated per
+      upward step. 0.5 = half of it, so the controller approaches the target
+      instead of overshooting.
+      self_regulation_step_up: hard limit of an upward step in watts, on top of
+      step_gain.
+      self_regulation_step_down: limit of a downward step in watts. 0 =
+      unlimited so a sudden drop in load is corrected immediately.
+      self_regulation_fast_down: skip deadband and minimum interval when
+      stepping down. Should stay enabled, otherwise the system keeps exporting
+      for up to min_interval seconds after a load drop.
+      self_regulation_input_timeout: seconds without a new control value after
+      which the setpoint falls back to 0 W. Prevents the keepalive from
+      re-sending the last value forever after a Home Assistant restart. 0 =
+      off.
   general_settings:
     name: General
     description: >-
