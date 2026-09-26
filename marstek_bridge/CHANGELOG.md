@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.12 - 2026-09-26
+
+- Jede empfangene MQTT-Regelnachricht wird auf Log-Level `info` protokolliert,
+  zusammen mit dem daraus berechneten Sollwert, dem aktuellen Sollwert und dem
+  Deckel - auch dann, wenn anschliessend kein Kommando gesendet wird.
+- Die Folgemeldungen automatischer Sendungen (`ES.SetMode`, Sendebestaetigung,
+  Totband, Fast-Down) liegen jetzt auf `debug`, damit die INFO-Ebene bei
+  aktiver Regelung genau eine Zeile pro Nachricht zeigt.
+
 ## 0.0.11 - 2026-09-26
 
 **Achtung:** `self_regulation_mode` entfaellt. Die Regelung arbeitet jetzt

@@ -532,12 +532,21 @@ class Bridge:
             _LOGGER.error("%s", err)
             return False
 
-        _LOGGER.info("\033[1;36mES.SetMode -> %s\033[0m %s", mode, config)
+        # Vom Benutzer ausgeloest -> INFO, aus Regelung/Keepalive -> DEBUG,
+        # damit die INFO-Ebene bei aktiver Selbstregelung lesbar bleibt.
+        _LOGGER.log(
+            logging.INFO if refresh else logging.DEBUG,
+            "\033[1;36mES.SetMode -> %s\033[0m %s",
+            mode,
+            config,
+        )
         result = self._query(M_ES_SET_MODE, {"config": config})
         if result is None:
             return False
         self.states[GRP_ENERGY_CONTROL]["applied_mode"] = mode
-        self._note_set_result(M_ES_SET_MODE, result)
+        self._note_set_result(
+            M_ES_SET_MODE, result, logging.INFO if refresh else logging.DEBUG
+        )
         self._publish_state(GRP_ENERGY_CONTROL)
         self._last_passive_push = time.monotonic()
         if refresh:
@@ -630,14 +639,33 @@ class Bridge:
         self._last_regulation_input = time.monotonic()
         self._publish_state(GRP_ENERGY_CONTROL)
 
+        # Jede empfangene Nachricht wird mit dem daraus berechneten Sollwert
+        # protokolliert - auch dann, wenn sie anschliessend nicht gesendet wird.
         if not self._regulation_active():
-            _LOGGER.trace("Regelwert %.1f W empfangen, Selbstregelung aus", value)
-            return
-        if ctrl.get("applied_mode") != MODE_PASSIVE:
-            _LOGGER.debug(
-                "Regelwert %.1f W empfangen, aber Passive ist nicht aktiv", value
+            _LOGGER.info(
+                "MQTT-Regelwert \033[1m%.1f W\033[0m - Selbstregelung ist aus",
+                value,
             )
             return
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            _LOGGER.info(
+                "MQTT-Regelwert \033[1m%.1f W\033[0m - Passive-Modus ist nicht "
+                "aktiv, kein Kommando",
+                value,
+            )
+            return
+
+        current = ctrl.get("regulation_output")
+        target = self._compute_regulation_output(value)
+        _LOGGER.info(
+            "MQTT-Regelwert \033[1m%.1f W\033[0m (Ziel %s W) | Sollwert %s W -> "
+            "\033[1m%s W\033[0m | Deckel %s W",
+            value,
+            self.s.self_regulation_reserve,
+            current if current is not None else 0,
+            target,
+            max(0, int(ctrl.get("passive_power", 0))),
+        )
         self._pending_regulation = value
         self._flush_regulation()
 
@@ -700,10 +728,9 @@ class Bridge:
                 return  # Wert bleibt vorgemerkt und wird spaeter gesendet
             if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
                 self._pending_regulation = None
-                _LOGGER.trace(
-                    "Regelwert %.1f W -> %s W innerhalb des Totbands (%s W), "
-                    "nicht gesendet",
-                    value,
+                _LOGGER.debug(
+                    "Sollwert %s W liegt innerhalb des Totbands (%s W) - "
+                    "kein Kommando",
                     out,
                     self.s.self_regulation_deadband,
                 )
@@ -711,15 +738,12 @@ class Bridge:
 
         self._pending_regulation = None
         ctrl["regulation_output"] = out
-        _LOGGER.info(
-            "Selbstregelung %s: Netz %.1f W (Ziel %s W) | Sollwert %s -> "
-            "\033[1m%s W\033[0m (Deckel %s W)",
+        _LOGGER.debug(
+            "Selbstregelung %s: %s W -> %s W wird gesendet%s",
             "RUNTER" if going_down else "hoch",
-            value,
-            self.s.self_regulation_reserve,
             last if last is not None else 0,
             out,
-            max(0, int(ctrl.get("passive_power", 0))),
+            " (Fast-Down, Totband/Takt uebersprungen)" if fast else "",
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
@@ -974,11 +998,13 @@ class Bridge:
             self.health.update(device_ok=True)
         self._publish_state(GRP_SYSTEM)
 
-    def _note_set_result(self, method: str, result: dict[str, Any]) -> None:
+    def _note_set_result(
+        self, method: str, result: dict[str, Any], level: int = logging.INFO
+    ) -> None:
         value = result.get("set_result")
         text = f"{method}: {'OK' if value in (True, 'true', 'ture', 1) else value}"
         self.states[GRP_SYSTEM]["last_set_result"] = text
-        _LOGGER.info("%s", text)
+        _LOGGER.log(level, "%s", text)
 
     def _control_entities(self) -> list[Ent]:
         return build_control_entities(

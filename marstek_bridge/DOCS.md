@@ -192,6 +192,23 @@ Neue Entities im Gerät *Marstek Energy Control*: Switch **Self-regulation**,
 Sensor **Regulation input** (zuletzt empfangen) und Sensor **Regulation output**
 (zuletzt gesendet).
 
+### Was im Log steht
+
+Auf Level `info` erzeugt jede empfangene MQTT-Nachricht genau eine Zeile:
+
+```
+MQTT-Regelwert 512.0 W (Ziel 12 W) | Sollwert 0 W -> 50 W | Deckel 600 W
+MQTT-Regelwert -200.0 W (Ziel 12 W) | Sollwert 150 W -> 0 W | Deckel 600 W
+MQTT-Regelwert 300.0 W - Passive-Modus ist nicht aktiv, kein Kommando
+MQTT-Regelwert 300.0 W - Selbstregelung ist aus
+```
+
+Der gezeigte Sollwert ist der aus diesem Wert berechnete. Ob er auch gesendet
+wird, entscheiden Totband und Mindestabstand - das steht auf Level `debug`,
+ebenso das eigentliche `ES.SetMode`, der Fast-Down-Hinweis und der Keepalive.
+Bleibt der Sollwert über mehrere Zeilen gleich, wurde dazwischen wegen des
+Mindestabstands noch nicht gesendet.
+
 ## Eigener PV-Energiezähler
 
 Der Zähler `total_pv_energy` des Geräts ist unzuverlässig, `pv_power` dagegen
