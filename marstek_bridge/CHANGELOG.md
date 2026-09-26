@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.14 - 2026-09-26
+
+**Fix:** Lag der berechnete Sollwert am Deckel, aber weniger als
+`self_regulation_deadband` ueber dem aktuellen Wert, wurde er nie gesendet -
+der Regler blieb dauerhaft knapp unter dem Deckel haengen, obwohl noch eine
+grosse Abweichung offen war.
+
+- Das Totband wird uebersprungen, sobald die Berechnung begrenzt wurde: am
+  Deckel nach oben und bei 0 W nach unten. Abseits der Anschlaege wirkt es
+  unveraendert.
+
 ## 0.0.13 - 2026-09-26
 
 **Fix:** Bei negativem Netzwert (Einspeisung) hat der Regler denselben Fehler

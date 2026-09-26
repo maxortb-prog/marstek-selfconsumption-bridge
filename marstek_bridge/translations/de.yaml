@@ -84,7 +84,9 @@ configuration:
       Bezug auf diesem Wert, damit er nicht ins Negative kippt und ins Netz
       eingespeist wird. Uebliche Werte 10-15 W.
       self_regulation_deadband: Abweichungen kleiner als dieser Wert in Watt
-      loesen kein neues Kommando aus. Gilt nur beim Hochregeln.
+      loesen kein neues Kommando aus. Gilt nur beim Hochregeln und nur abseits
+      der Anschlaege - liegt der berechnete Wert am Deckel oder bei 0 W, wird er
+      auch bei kleiner Differenz gesendet.
       self_regulation_min_interval: minimaler Abstand zwischen zwei
       Regelbefehlen in Sekunden. Gilt nur beim Hochregeln.
       self_regulation_min_interval_down: minimaler Abstand beim Runterregeln.

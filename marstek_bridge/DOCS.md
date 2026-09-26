@@ -85,7 +85,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Ziel-Netzbezug in Watt, auf den geregelt wird. |
-| `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln). |
+| `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln und nur abseits der Anschläge). |
 | `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
 | `self_regulation_min_interval_down` | `5.0` | Minimaler Abstand beim Runterregeln. |
 | `self_regulation_settle_time` | `10.0` | Totzeit, über die eine gesendete Änderung als „in der Messung noch nicht sichtbar" gilt. `0` = aus. |
@@ -133,6 +133,11 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   Lastabfall bis zu `min_interval` Sekunden lang zu viel eingespeist.
 * **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
   sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel.
+* **Am Anschlag gilt kein Totband.** Würde der berechnete Schritt über den
+  Deckel hinaus- oder unter 0 W gehen, wird der begrenzte Wert auch dann
+  gesendet, wenn er weniger als `deadband` vom aktuellen Sollwert entfernt ist.
+  Sonst bliebe der Regler knapp unter dem Deckel stehen, obwohl noch eine große
+  Abweichung offen ist - und käme dort nie wieder heraus.
 * **Untergrenze** ist fest 0 W. Der Sollwert wird nie negativ, es wird also
   weder ins Netz eingespeist noch aus dem Netz geladen.
 * **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der

@@ -82,7 +82,9 @@ configuration:
       holds the import at this value so it never turns negative and exports to
       the grid. Typical values are 10-15 W.
       self_regulation_deadband: deviations smaller than this value in watts do
-      not trigger a new command. Applies to upward steps only.
+      not trigger a new command. Applies to upward steps only and not at the
+      limits - a value that sits at the cap or at 0 W is sent even if the
+      difference is small.
       self_regulation_min_interval: minimum time between two control commands
       in seconds. Applies to upward steps only.
       self_regulation_min_interval_down: minimum time between downward steps.

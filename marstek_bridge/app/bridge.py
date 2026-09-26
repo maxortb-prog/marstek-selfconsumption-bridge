@@ -81,6 +81,7 @@ class Bridge:
         # niedergeschlagen hat (Totzeit von Geraet und Sensor).
         self._unseen_delta = 0.0
         self._unseen_since = 0.0
+        self._last_target_saturated = False
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -748,14 +749,22 @@ class Bridge:
             if self.s.self_regulation_step_down > 0:
                 step = max(step, -float(self.s.self_regulation_step_down))
 
-        return int(max(0, min(cap, round(base + step))))
+        raw = base + step
+        out = int(max(0, min(cap, round(raw))))
+        # Begrenzt? Dann steht der Regler am Anschlag und das Totband darf den
+        # letzten Schritt dorthin nicht blockieren.
+        self._last_target_saturated = raw > cap or raw < 0
+        return out
 
     def _flush_regulation(self) -> None:
         """Ausstehenden Regelwert senden.
 
         Ein Schritt nach unten darf Totband und Mindestabstand ueberspringen
         (``self_regulation_fast_down``), damit auf einen plotzlichen Lastabfall
-        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv.
+        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv - mit einer
+        Ausnahme: liegt das Ziel am Anschlag (Deckel oder 0 W), wird das Totband
+        ignoriert. Sonst bliebe der Sollwert knapp unter dem Deckel haengen,
+        obwohl noch reichlich Abweichung offen ist.
         """
         if self._pending_regulation is None or not self._regulation_active():
             return
@@ -779,7 +788,11 @@ class Bridge:
         else:
             if since_send < self.s.self_regulation_min_interval:
                 return  # Wert bleibt vorgemerkt und wird spaeter gesendet
-            if last is not None and abs(out - int(last)) < self.s.self_regulation_deadband:
+            if (
+                last is not None
+                and not self._last_target_saturated
+                and abs(out - int(last)) < self.s.self_regulation_deadband
+            ):
                 self._pending_regulation = None
                 _LOGGER.debug(
                     "Sollwert %s W liegt innerhalb des Totbands (%s W) - "
@@ -796,7 +809,9 @@ class Bridge:
             "RUNTER" if going_down else "hoch",
             last if last is not None else 0,
             out,
-            " (Fast-Down, Totband/Takt uebersprungen)" if fast else "",
+            " (Fast-Down, Totband/Takt uebersprungen)" if fast
+            else (" (Anschlag, Totband uebersprungen)"
+                  if self._last_target_saturated else ""),
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
