@@ -51,6 +51,12 @@ configuration:
       mobile app cannot connect in parallel and cause command conflicts.
       led_state: LED of the control panel, off = the LED is switched off at
       start-up.
+      pv_energy_enabled: keeps an own PV energy counter that integrates
+      pv_power from ES.GetStatus over the actually elapsed time, independent of
+      the device counter (total_pv_energy). The value survives restarts.
+      pv_energy_max_gap: largest gap in seconds between two samples that is
+      still extrapolated. Longer pauses (restart, device offline) are discarded
+      so the counter stays correct.
   passiv_mode_settings:
     name: Passive mode
     description: >-

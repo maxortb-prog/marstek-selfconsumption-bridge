@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.9"
+version: "0.0.10"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -53,6 +53,8 @@ options:
     dod_value: 88
     ble_block_enable: true
     led_state: false
+    pv_energy_enabled: true
+    pv_energy_max_gap: 300
   passiv_mode_settings:
     passive_power_min: -1200
     passive_power_max: 1200
@@ -100,6 +102,8 @@ schema:
     dod_value: int(30,88)
     ble_block_enable: bool
     led_state: bool
+    pv_energy_enabled: bool
+    pv_energy_max_gap: int(10,3600)
   passiv_mode_settings:
     passive_power_min: int(-5000,0)
     passive_power_max: int(0,5000)

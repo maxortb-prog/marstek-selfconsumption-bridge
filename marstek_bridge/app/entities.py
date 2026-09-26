@@ -304,6 +304,16 @@ ENERGY_STATUS_ENTITIES: list[Ent] = [
         unit="Wh",
         state_class="total_increasing",
     ),
+    # Eigener Zaehler: Integral ueber pv_power, unabhaengig von
+    # total_pv_energy des Geraets.
+    Ent(
+        "calc_pv_energy",
+        "PV energy (calculated)",
+        device_class="energy",
+        unit="Wh",
+        state_class="total_increasing",
+        icon="mdi:solar-power",
+    ),
     refresh_button("energy status"),
 ]
 

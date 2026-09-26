@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.10 - 2026-09-26
+
+- Eigener PV-Energiezaehler **PV energy (calculated)** im Geraet *Marstek
+  Energy Status*: Integral ueber `pv_power` nach der Trapezregel mit der
+  tatsaechlich vergangenen Zeit zwischen zwei `ES.GetStatus`-Antworten.
+  Unabhaengig vom fehlerhaften `total_pv_energy` des Geraets.
+- Der Zaehlerstand wird in `/data/marstek_state.json` gesichert und ueberlebt
+  Neustarts des Add-ons.
+- Neue Optionen `pv_energy_enabled` und `pv_energy_max_gap` (Standard 300 s):
+  laengere Luecken zwischen zwei Messwerten werden verworfen statt
+  hochgerechnet.
+
 ## 0.0.9 - 2026-09-26
 
 - Die Entity *Communication established* wird als `enum` mit den Zustaenden

@@ -71,7 +71,7 @@ def handle(msg: dict) -> dict:
             "id": inst,
             "bat_soc": 98,
             "bat_cap": 5120,
-            "pv_power": 0,
+            "pv_power": random.randint(0, 800),
             "ongrid_power": random.randint(-800, 800),
             "offgrid_power": 0,
             "bat_power": random.randint(-800, 800),

@@ -51,6 +51,8 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "dod_value": 88,
         "ble_block_enable": True,
         "led_state": False,
+        "pv_energy_enabled": True,
+        "pv_energy_max_gap": 300,
     },
     "passiv_mode_settings": {
         "passive_power_min": -1200,
@@ -123,6 +125,8 @@ class Settings:
     dod_value: int = 88
     ble_block_enable: bool = True
     led_state: bool = False
+    pv_energy_enabled: bool = True
+    pv_energy_max_gap: int = 300
 
     # -- Passive -----------------------------------------------------------
     passive_power_min: int = -1200
@@ -201,6 +205,16 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (OSError, ValueError) as err:  # pragma: no cover - defensiv
         _LOGGER.warning("Konnte %s nicht lesen: %s", path, err)
     return {}
+
+
+def load_state() -> dict[str, Any]:
+    """Persistente Laufzeitdaten lesen (Zaehlerstaende, Geraetedaten)."""
+    return _read_json(STATE_PATH)
+
+
+def save_state(data: dict[str, Any]) -> None:
+    """Persistente Laufzeitdaten ergaenzen bzw. ueberschreiben."""
+    _write_state(data)
 
 
 def _write_state(data: dict[str, Any]) -> None:

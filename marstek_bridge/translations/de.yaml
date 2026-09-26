@@ -51,6 +51,13 @@ configuration:
       ble_block_enable: aktiviert beim Start die Bluetooth-Sperre (Ble.Adv), so
       dass sich die App nicht parallel verbindet und Befehle kollidieren.
       led_state: LED des Bedienpanels, aus = LED wird beim Start abgeschaltet.
+      pv_energy_enabled: fuehrt einen eigenen PV-Energiezaehler, der pv_power
+      aus ES.GetStatus ueber die tatsaechlich vergangene Zeit integriert.
+      Unabhaengig vom Zaehler des Geraets (total_pv_energy). Der Stand
+      ueberlebt Neustarts.
+      pv_energy_max_gap: groesste Luecke in Sekunden zwischen zwei Messwerten,
+      die noch hochgerechnet wird. Laengere Pausen (Neustart, Geraet offline)
+      werden verworfen, damit der Zaehler nicht verfaelscht wird.
   passiv_mode_settings:
     name: Passive-Modus
     description: >-

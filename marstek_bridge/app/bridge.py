@@ -53,7 +53,7 @@ from .entities import (
 )
 from .health import HealthState
 from .mqtt_bridge import MqttBridge
-from .settings import Settings
+from .settings import Settings, load_state, save_state
 from .udp_client import ApiError, MarstekUdpClient, UdpError
 
 _LOGGER = logging.getLogger("marstek.bridge")
@@ -77,6 +77,10 @@ class Bridge:
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
         self._pending_regulation: float | None = None
+        # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
+        # (Zeitpunkt, Leistung) fuer die Trapezintegration.
+        self._pv_energy_wh = float(load_state().get("pv_energy_wh") or 0.0)
+        self._pv_last_sample: tuple[float, float] | None = None
 
         self.states: dict[str, dict[str, Any]] = {
             GRP_SYSTEM: {},
@@ -364,9 +368,64 @@ class Bridge:
         result = self._query(M_ES_STATUS)
         if result is None:
             return False
-        self.states[GRP_ENERGY_STATUS] = _clean(result)
+        clean = _clean(result)
+        self.states[GRP_ENERGY_STATUS] = clean
+        self._update_pv_energy(clean.get("pv_power"))
         self._publish_group(GRP_ENERGY_STATUS, ENERGY_STATUS_ENTITIES)
         return True
+
+    def _update_pv_energy(self, power: Any) -> None:
+        """Eigenen PV-Energiezaehler aus pv_power fortschreiben.
+
+        Der Zaehler des Geraets (total_pv_energy) ist unzuverlaessig, deshalb
+        wird hier ueber die tatsaechlich vergangene Zeit integriert - als
+        Trapez, weil die Abfrage nicht in exakt gleichen Abstaenden kommt.
+        """
+        if not self.s.pv_energy_enabled:
+            return
+        if not isinstance(power, (int, float)) or isinstance(power, bool):
+            _LOGGER.debug("PV-Energie: kein gueltiger pv_power-Wert (%r)", power)
+            return
+
+        now = time.monotonic()
+        power = float(power)
+        previous = self._pv_last_sample
+        self._pv_last_sample = (now, power)
+        self.states[GRP_ENERGY_STATUS]["calc_pv_energy"] = round(self._pv_energy_wh, 2)
+
+        if previous is None:
+            _LOGGER.debug(
+                "PV-Energie: erste Stuetzstelle (%.0f W), Zaehlerstand %.1f Wh",
+                power,
+                self._pv_energy_wh,
+            )
+            return
+
+        last_time, last_power = previous
+        delta = now - last_time
+        if delta <= 0:
+            return
+        if delta > self.s.pv_energy_max_gap:
+            _LOGGER.warning(
+                "PV-Energie: Luecke von %.0fs ueberschreitet pv_energy_max_gap "
+                "(%ss) - Intervall wird verworfen",
+                delta,
+                self.s.pv_energy_max_gap,
+            )
+            return
+
+        added = (last_power + power) / 2.0 * delta / 3600.0
+        self._pv_energy_wh += added
+        self.states[GRP_ENERGY_STATUS]["calc_pv_energy"] = round(self._pv_energy_wh, 2)
+        _LOGGER.debug(
+            "PV-Energie: %.0f W -> %.0f W ueber %.1fs = +%.3f Wh (gesamt %.1f Wh)",
+            last_power,
+            power,
+            delta,
+            added,
+            self._pv_energy_wh,
+        )
+        save_state({"pv_energy_wh": round(self._pv_energy_wh, 3)})
 
     def _step_es_mode(self) -> bool:
         result = self._query(M_ES_MODE)

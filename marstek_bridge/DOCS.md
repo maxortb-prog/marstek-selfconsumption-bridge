@@ -69,6 +69,8 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `dod_value` | `88` | Depth of Discharge, Bereich 30-88. |
 | `ble_block_enable` | `true` | Bluetooth-Sperre beim Start aktivieren. Gesendet wird `Ble.Adv {"enable": 0}` (Doku 3.9: 0 = enable). |
 | `led_state` | `false` | LED des Bedienpanels beim Start ausschalten. |
+| `pv_energy_enabled` | `true` | Eigener PV-Energiezähler (Integral über `pv_power`). |
+| `pv_energy_max_gap` | `300` | Größte Lücke in Sekunden zwischen zwei Messwerten, die noch hochgerechnet wird. |
 
 ## Passive-Modus
 
@@ -188,6 +190,34 @@ Marstek-Bridge-Control/energy_meter/refresh/set           PRESS  (nur EM.GetStat
   als Wh veröffentlicht.
 * Das Aktivieren der Open API kann gerätintern Funktionen deaktivieren, um
   Befehlskonflikte zu vermeiden (siehe Marstek-Doku, Kapitel 2).
+
+## Eigener PV-Energiezähler
+
+Der Zähler `total_pv_energy` des Geräts ist unzuverlässig, `pv_power` dagegen
+korrekt. Die Bridge integriert deshalb bei jeder `ES.GetStatus`-Antwort selbst:
+
+```
+Wh += (P_vorher + P_jetzt) / 2 × Δt / 3600
+```
+
+* **Trapezregel** statt Rechteck, weil die Abfrage nicht in exakt gleichen
+  Abständen kommt (Refresh-Button, HA-gesteuertes Polling).
+* **Δt ist die tatsächlich vergangene Zeit** zwischen zwei Antworten, kein
+  angenommenes Intervall.
+* **Lücken** größer als `pv_energy_max_gap` (Standard 300 s) werden verworfen
+  und mit einer Warnung im Log vermerkt. Der Zähler bleibt dabei stehen, zählt
+  ab dem nächsten Wert aber normal weiter.
+* **Nach einem Neustart** wird der Zählerstand aus `/data/marstek_state.json`
+  übernommen; der erste Messwert dient nur als Stützstelle, die Ausfallzeit
+  wird also nicht mitgezählt.
+
+Die Entity heißt **PV energy (calculated)** und liegt im Gerät *Marstek Energy
+Status*. Sie ist `device_class: energy` mit `state_class: total_increasing` und
+kann direkt im Energie-Dashboard als Solarproduktion eingebunden werden.
+
+Zum Zurücksetzen das Add-on stoppen, in `/data/marstek_state.json` den
+Schlüssel `pv_energy_wh` löschen oder auf den gewünschten Wert setzen und das
+Add-on wieder starten.
 
 ## Kommunikationsstatus in Automationen
 
