@@ -127,6 +127,10 @@ class Bridge:
             "regulation_input": None,
             "regulation_output": None,
         }
+        self._regulation_seed_pending = bool(settings.restore_state)
+        if settings.restore_state:
+            self._restore_control_state()
+
         self.states[GRP_SYSTEM].update(
             {
                 "communication": COMM_FAIL,
@@ -138,6 +142,84 @@ class Bridge:
                 "last_update": None,
             }
         )
+
+    # =================================================================
+    # Zustand ueber Neustarts hinweg
+    # =================================================================
+    RESTORED_KEYS = (
+        "passive_power",
+        "passive_cd_time",
+        "self_regulation",
+        "target_mode",
+        "regulation_output",
+    )
+
+    def _restore_control_state(self) -> None:
+        """Steuerwerte aus dem State-File uebernehmen.
+
+        Wiederhergestellt werden Deckel, Countdown, der Schalter der
+        Selbstregelung, der vorgemerkte Modus und der zuletzt berechnete
+        Sollwert. Bewusst *nicht* der zuletzt aktive Modus: ob das Geraet noch
+        im Passive-Modus steht, weiss erst ES.GetMode.
+        """
+        saved = load_state().get("control")
+        if not isinstance(saved, dict) or not saved:
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        taken: list[str] = []
+        for key in self.RESTORED_KEYS:
+            if key in saved and saved[key] is not None:
+                ctrl[key] = saved[key]
+                taken.append(f"{key}={saved[key]}")
+        if taken:
+            _LOGGER.info("Steuerzustand wiederhergestellt: %s", ", ".join(taken))
+
+    def _save_control_state(self) -> None:
+        if not self.s.restore_state:
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        save_state({"control": {k: ctrl.get(k) for k in self.RESTORED_KEYS}})
+
+    def _seed_regulation_from_device(self, data: dict[str, Any]) -> None:
+        """Nach dem Start den Sollwert aus der Geraetemeldung uebernehmen.
+
+        ``ongrid_power`` aus ``ES.GetMode`` ist die tatsaechliche Leistung des
+        Geraets. Solange es noch ``Passive`` meldet, ist das die beste Auskunft
+        darueber, wo die Regelung weitermachen sollte - danach ist der
+        Countdown abgelaufen und der Wert nicht mehr aussagekraeftig, dann
+        zaehlt der gesicherte Wert.
+        """
+        if not self._regulation_seed_pending:
+            return
+        self._regulation_seed_pending = False
+
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
+        mode = data.get("mode")
+        power = data.get("ongrid_power")
+
+        if mode == MODE_PASSIVE and isinstance(power, (int, float)) and power > 0:
+            seed = int(max(0, min(cap, round(float(power)))))
+            ctrl["regulation_output"] = seed
+            _LOGGER.info(
+                "Regelung setzt beim Geraetewert auf: \033[1m%s W\033[0m "
+                "(ES.GetMode ongrid_power, Modus Passive, Deckel %s W)",
+                seed,
+                cap,
+            )
+        elif ctrl.get("regulation_output") is not None:
+            seed = int(max(0, min(cap, int(ctrl["regulation_output"]))))
+            ctrl["regulation_output"] = seed
+            _LOGGER.info(
+                "Geraet meldet Modus '%s' - Regelung setzt beim gesicherten "
+                "Wert auf: \033[1m%s W\033[0m (Deckel %s W)",
+                mode,
+                seed,
+                cap,
+            )
+        else:
+            return
+        self._publish_state(GRP_ENERGY_CONTROL)
 
     # =================================================================
     # Lifecycle
@@ -461,6 +543,8 @@ class Bridge:
                 clean[key] = round(clean[key] * 0.1, 1)
         self.states[GRP_ENERGY_MODE] = clean
 
+        self._seed_regulation_from_device(clean)
+
         mode = clean.get("mode")
         if isinstance(mode, str) and mode in SELECTABLE_MODES:
             if self.states[GRP_ENERGY_CONTROL].get("applied_mode") is None:
@@ -601,9 +685,63 @@ class Bridge:
                     "- es werden 0 W gesendet"
                 )
                 return 0
-            return int(value)
+            # Der Deckel kann sich zwischen zwei Regelwerten geaendert haben
+            # (z. B. SOC-abhaengig aus Home Assistant). Auch der Keepalive darf
+            # dann nicht mehr den alten, hoeheren Sollwert weitersenden.
+            cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
+            capped = int(max(0, min(cap, int(value))))
+            if capped != int(value):
+                _LOGGER.debug(
+                    "Sollwert %s W auf den aktuellen Deckel %s W begrenzt",
+                    int(value),
+                    cap,
+                )
+                ctrl["regulation_output"] = capped
+            return capped
         power = int(ctrl.get("passive_power", 0))
         return max(self.s.passive_power_min, min(self.s.passive_power_max, power))
+
+    def _on_cap_changed(self) -> None:
+        """Reaktion auf eine geaenderte Obergrenze (*Passive power*).
+
+        Wird der Deckel gesenkt - etwa weil der SOC unter eine Schwelle faellt -
+        muss der Sollwert sofort mitgehen. Sonst schickt der Keepalive bis zu
+        ``cd_time`` Sekunden lang weiter die alte, zu hohe Leistung. Ein
+        Absenken ist immer sicher und wird deshalb ohne Ruecksicht auf Totband
+        und Mindestabstand gesendet. Wird der Deckel angehoben, uebernimmt das
+        der naechste regulaere Regelschritt.
+        """
+        if not self._regulation_active():
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return
+        current = ctrl.get("regulation_output")
+        if current is None:
+            return
+
+        cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
+        if int(current) <= cap:
+            # Deckel angehoben oder unveraendert: den zuletzt empfangenen Wert
+            # erneut einplanen, damit der naechste Schritt den neuen Spielraum
+            # nutzt.
+            if ctrl.get("regulation_input") is not None:
+                self._pending_regulation = float(ctrl["regulation_input"])
+            return
+
+        _LOGGER.info(
+            "Deckel auf %s W gesenkt - Sollwert sofort von %s W auf "
+            "\033[1m%s W\033[0m begrenzt",
+            cap,
+            int(current),
+            cap,
+        )
+        ctrl["regulation_output"] = cap
+        self._pending_regulation = None
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if self._apply_mode(refresh=False):
+            self._last_regulation_send = time.monotonic()
+            self._note_commanded_change(float(cap - int(current)))
 
     def _set_self_regulation(self, enabled: bool) -> None:
         ctrl = self.states[GRP_ENERGY_CONTROL]
@@ -897,6 +1035,7 @@ class Bridge:
                 self.s.passive_power_min, min(self.s.passive_power_max, value)
             )
             self._publish_state(GRP_ENERGY_CONTROL)
+            self._on_cap_changed()
         elif suffix == f"{GRP_ENERGY_CONTROL}/passive_cd_time/set":
             value = int(float(payload))
             ctrl["passive_cd_time"] = max(
@@ -1113,6 +1252,8 @@ class Bridge:
         self._publish_state(group)
 
     def _publish_state(self, group: str) -> None:
+        if group == GRP_ENERGY_CONTROL:
+            self._save_control_state()
         if self.disc is None:
             return
         payload = {k: v for k, v in self.states[group].items() if not k.startswith("_")}

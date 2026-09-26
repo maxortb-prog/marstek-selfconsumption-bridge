@@ -75,6 +75,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_input_timeout": 60,
     },
     "general_settings": {
+        "restore_state": True,
         "watchdog_failure_threshold": 3,
         "persist_device_info": True,
         "health_port": 8099,

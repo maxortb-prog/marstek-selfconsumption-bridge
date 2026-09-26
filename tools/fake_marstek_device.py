@@ -20,6 +20,10 @@ import socket
 
 SRC = "VenusC-123456789012"
 
+# Zuletzt gesetzter Modus samt Leistung - damit ES.GetMode etwas Sinnvolles
+# meldet und der Wiederanlauf der Bridge getestet werden kann.
+STATE = {"mode": "Auto", "power": 0}
+
 
 def handle(msg: dict) -> dict:
     method = msg.get("method")
@@ -83,8 +87,8 @@ def handle(msg: dict) -> dict:
     elif method == "ES.GetMode":
         result = {
             "id": inst,
-            "mode": "Auto",
-            "ongrid_power": 100,
+            "mode": STATE["mode"],
+            "ongrid_power": STATE["power"],
             "offgrid_power": 0,
             "bat_soc": 98,
             "ct_state": 1,
@@ -107,6 +111,11 @@ def handle(msg: dict) -> dict:
             "output_energy": 0,
         }
     elif method in ("ES.SetMode", "DOD.SET", "Ble.Adv", "Led.Ctrl"):
+        if method == "ES.SetMode":
+            config = params.get("config") or {}
+            STATE["mode"] = config.get("mode", STATE["mode"])
+            if "passive_cfg" in config:
+                STATE["power"] = config["passive_cfg"].get("power", 0)
         result = {"id": inst, "set_result": True}
     else:
         return {

@@ -116,6 +116,12 @@ configuration:
     name: General
     description: >-
       Watchdog and add-on behaviour.
+      restore_state: restores the cap (passive power), the countdown, the
+      self-regulation switch, the pre-selected mode and the last computed
+      setpoint after a restart. If the device still reports passive mode in
+      ES.GetMode, its measured power (ongrid_power) is used as the starting
+      point instead. Without this option the controller starts at 0 W after
+      every restart.
       watchdog_failure_threshold: number of consecutive watchdog triggers before
       the health endpoint turns unhealthy and the Supervisor restarts the
       add-on. Higher values prevent restart loops caused by short outages.

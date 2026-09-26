@@ -118,6 +118,12 @@ configuration:
     name: Allgemein
     description: >-
       Watchdog und Betriebsverhalten des Add-ons.
+      restore_state: stellt nach einem Neustart den Deckel (Passive power), den
+      Countdown, den Schalter der Selbstregelung, den vorgemerkten Modus und
+      den zuletzt berechneten Sollwert wieder her. Meldet das Geraet in
+      ES.GetMode noch den Passive-Modus, wird stattdessen dessen gemessene
+      Leistung (ongrid_power) als Startwert genommen. Ohne diese Option beginnt
+      die Regelung nach jedem Neustart bei 0 W.
       watchdog_failure_threshold: Anzahl aufeinanderfolgender
       Watchdog-Auslösungen, bis der Health-Endpoint auf unhealthy wechselt und
       der Supervisor das Add-on neu startet. Höhere Werte verhindern

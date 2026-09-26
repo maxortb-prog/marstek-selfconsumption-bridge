@@ -99,6 +99,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 
 | Option | Default | Beschreibung |
 |---|---|---|
+| `restore_state` | `true` | Steuerzustand über Neustarts hinweg sichern und wiederherstellen. |
 | `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen, bis `/health` 503 liefert (verhindert Neustart-Schleifen bei kurzen Aussetzern). |
 | `persist_device_info` | `true` | `device_ble_mac`/`device_type` in die Add-on-Optionen zurückschreiben. |
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
@@ -132,7 +133,15 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   unten sowohl Totband als auch Mindestabstand - sonst würde nach einem
   Lastabfall bis zu `min_interval` Sekunden lang zu viel eingespeist.
 * **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
-  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel.
+  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel. Sie lässt
+  sich im laufenden Betrieb verändern, etwa SOC-abhängig aus einer
+  HA-Automation.
+* **Ein gesenkter Deckel wirkt sofort.** Liegt der aktuelle Sollwert darüber,
+  wird er im selben Moment gekappt und gesendet - ohne Rücksicht auf Totband
+  und Mindestabstand, denn Absenken ist immer die sichere Richtung. Zusätzlich
+  prüft jedes ausgehende Kommando den Sollwert gegen den aktuellen Deckel, auch
+  das des Keepalives. Ein angehobener Deckel wird beim nächsten regulären
+  Regelschritt genutzt.
 * **Am Anschlag gilt kein Totband.** Würde der berechnete Schritt über den
   Deckel hinaus- oder unter 0 W gehen, wird der begrenzte Wert auch dann
   gesendet, wenn er weniger als `deadband` vom aktuellen Sollwert entfernt ist.
@@ -230,6 +239,33 @@ wird, entscheiden Totband und Mindestabstand - das steht auf Level `debug`,
 ebenso das eigentliche `ES.SetMode`, der Fast-Down-Hinweis und der Keepalive.
 Bleibt der Sollwert über mehrere Zeilen gleich, wurde dazwischen wegen des
 Mindestabstands noch nicht gesendet.
+
+## Verhalten nach einem Neustart
+
+Mit `restore_state` (Standard aktiv) nimmt die Bridge den Betrieb dort wieder
+auf, wo sie aufgehört hat, statt bei 0 W zu beginnen.
+
+Gesichert werden in `/data/marstek_state.json` unter dem Schlüssel `control`:
+der Deckel *Passive power*, der Countdown, der Schalter *Self-regulation*, der
+vorgemerkte Modus und der zuletzt berechnete Sollwert. Geschrieben wird bei
+jeder Änderung.
+
+Der Startwert der Regelung wird beim ersten `ES.GetMode` bestimmt:
+
+| Meldung des Geräts | Startwert |
+|---|---|
+| Modus `Passive`, `ongrid_power` > 0 | die gemessene Leistung des Geräts, auf den Deckel begrenzt |
+| anderer Modus (Countdown abgelaufen) | der gesicherte Sollwert, auf den Deckel begrenzt |
+| nichts gesichert | 0 W |
+
+Der Gerätewert hat Vorrang, weil er die tatsächliche Lage abbildet - der
+Speicher kann während der Ausfallzeit weitergelaufen sein. Verlässt er den
+Passive-Modus, weil der Countdown abgelaufen ist, ist seine Meldung
+bedeutungslos und der gesicherte Wert die bessere Auskunft.
+
+Der zuletzt *aktive* Modus wird bewusst nicht wiederhergestellt: Ob das Gerät
+noch im Passive-Modus steht, weiß erst `ES.GetMode`. Die Regelung sendet
+deshalb erst wieder, wenn der Modus über Select und Apply aktiv ist.
 
 ## Eigener PV-Energiezähler
 

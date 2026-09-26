@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.16 - 2026-09-26
+
+- Eine Senkung der Obergrenze *Passive power* wirkt jetzt sofort: liegt der
+  Sollwert darueber, wird er unmittelbar gekappt und gesendet. Bisher schickte
+  der Keepalive bis zu `cd_time` Sekunden lang weiter die alte, zu hohe
+  Leistung.
+- Jedes ausgehende Passive-Kommando prueft den Sollwert zusaetzlich gegen den
+  aktuellen Deckel - auch das des Keepalives.
+- Wird der Deckel angehoben, plant die Bridge den zuletzt empfangenen Regelwert
+  fuer den naechsten Schritt ein, damit der neue Spielraum genutzt wird.
+
+## 0.0.15 - 2026-09-26
+
+- Neue Option `restore_state` (Standard aktiv): Deckel, Countdown, Schalter der
+  Selbstregelung, vorgemerkter Modus und zuletzt berechneter Sollwert werden in
+  `/data/marstek_state.json` gesichert und nach einem Neustart wieder
+  uebernommen. Bisher fiel der Deckel auf `passive_power_default` zurueck und
+  die Regelung begann bei 0 W.
+- Meldet das Geraet beim ersten `ES.GetMode` noch den Passive-Modus, wird
+  dessen gemessene Leistung (`ongrid_power`) als Startwert verwendet - auf den
+  Deckel begrenzt.
+- Der Simulator merkt sich den zuletzt gesetzten Modus und meldet ihn in
+  `ES.GetMode`, damit der Wiederanlauf testbar ist.
+
 ## 0.0.14 - 2026-09-26
 
 **Fix:** Lag der berechnete Sollwert am Deckel, aber weniger als
