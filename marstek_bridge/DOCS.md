@@ -52,6 +52,7 @@ Leerer Benutzername = anonyme Verbindung.
 | `request_retries` | `2` | `0` = kein Retry, Nachricht wird verworfen und löst **keinen** Watchdog aus. `>0` = Wiederholungen, bei endgültigem Fehlschlag Watchdog. |
 | `request_max_time` | `10.0` | Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten, greift der Watchdog (Sonderfall). |
 | `poll_enabled` | `true` | Hauptschalter für das zyklische Polling. |
+| `poll_quiet_after_write` | `3.0` | Ruhezeit nach einem Schreibkommando, in der keine Statusabfrage startet. |
 | `poll_interval_es_status` | `10` | `ES.GetStatus` - die laufenden Leistungswerte. |
 | `poll_interval_battery` | `300` | `Bat.GetStatus` - vor allem die Temperatur. |
 | `poll_interval_pv` | `0` | `PV.GetStatus` - aus, steckt in Teilen in `ES.GetStatus`. |
@@ -355,6 +356,18 @@ Der Button *Apply mode* liest den Modus nach dem Umschalten nach, damit die
 Gruppe *Marstek Energy Mode* den neuen Zustand zeigt - aber nur, wenn
 `poll_interval_mode` größer 0 ist. Sonst löst eine Automation, die zyklisch auf
 Apply drückt, bei jedem Druck ein zusätzliches `ES.GetMode` aus.
+
+### Ruhezeit nach Schreibkommandos
+
+Direkt nach einem `ES.SetMode` ist der Speicher einige Sekunden beschäftigt und
+lässt Statusabfragen in den Timeout laufen, obwohl er erreichbar ist.
+`poll_quiet_after_write` (Standard 3 s) hält in dieser Zeit alle Abfragen
+zurück - Polling ebenso wie die Refresh-Buttons.
+
+Bei laufender Selbstregelung landen die Abfragen damit im Fenster zwischen zwei
+Regelkommandos. Damit eine Abfrage bei dichtem Regeltakt nicht dauerhaft
+verschoben wird, läuft sie trotzdem, sobald sie das Doppelte ihres Intervalls
+überfällig ist.
 
 ### Mindestpause zwischen Anfragen
 

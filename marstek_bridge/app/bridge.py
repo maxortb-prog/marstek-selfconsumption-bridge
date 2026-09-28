@@ -78,6 +78,7 @@ class Bridge:
         self._last_query_timed_out = False
         self._discovered: set[str] = set()
         self._poll_last: dict[str, float] = {}
+        self._last_write = 0.0
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
         self._last_regulation_input: float | None = None
@@ -649,6 +650,7 @@ class Bridge:
         result = self._query(M_DOD_SET, {"value": value}, with_instance=False)
         if result is None:
             return False
+        self._note_write()
         self.states[GRP_SYSTEM]["dod_value"] = value
         self._note_set_result(M_DOD_SET, result)
         self._publish_state(GRP_SYSTEM)
@@ -662,6 +664,7 @@ class Bridge:
         )
         if result is None:
             return False
+        self._note_write()
         self.states[GRP_SYSTEM]["ble_block"] = bool(enabled)
         self._note_set_result(M_BLE_ADV, result)
         self._publish_state(GRP_SYSTEM)
@@ -673,6 +676,7 @@ class Bridge:
         )
         if result is None:
             return False
+        self._note_write()
         self.states[GRP_SYSTEM]["led_state"] = bool(on)
         self._note_set_result(M_LED_CTRL, result)
         self._publish_state(GRP_SYSTEM)
@@ -724,6 +728,7 @@ class Bridge:
         result = self._query(M_ES_SET_MODE, {"config": config})
         if result is None:
             return False
+        self._note_write()
         self.states[GRP_ENERGY_CONTROL]["applied_mode"] = mode
         self._note_set_result(
             M_ES_SET_MODE, result, logging.INFO if refresh else CALC_LEVEL
@@ -1108,6 +1113,20 @@ class Bridge:
         if self._apply_mode(refresh=False):
             self._last_regulation_send = time.monotonic()
             self._note_commanded_change(float(out - (last if last is not None else 0)))
+        else:
+            # Das Kommando ist nicht angekommen - der Speicher laeuft weiter
+            # mit dem alten Sollwert. Den internen Stand zurueckdrehen, sonst
+            # rechnet der naechste Schritt von einem Wert aus, den das Geraet
+            # nie bekommen hat.
+            _LOGGER.warning(
+                "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W, "
+                "neuer Versuch beim naechsten Durchlauf",
+                out,
+                last if last is not None else 0,
+            )
+            ctrl["regulation_output"] = last
+            self._pending_regulation = value
+            self._publish_state(GRP_ENERGY_CONTROL)
 
     def _check_regulation_timeout(self) -> None:
         """Bei ausbleibenden Werten auf 0 W zurueckfallen.
@@ -1220,6 +1239,7 @@ class Bridge:
         step = self._group_refresh_steps()[suffix]
         group = suffix.split("/", 1)[0]
         _LOGGER.info("Manuelle Abfrage: %s", GROUP_TITLES[group])
+        self._wait_for_write_quiet()
         if step():
             self._set_communication(True)
 
@@ -1280,6 +1300,21 @@ class Bridge:
             last = self._poll_last.get(name, 0.0)
             if now - last < interval:
                 continue
+            # Direkt nach einem Schreibkommando ist der Speicher beschaeftigt.
+            # Die Abfrage wird verschoben - aber nur so lange, bis sie das
+            # Doppelte ihres Intervalls ueberfaellig ist, damit sie bei dichtem
+            # Regeltakt nicht dauerhaft verhungert.
+            remaining = self._write_quiet_remaining()
+            if remaining > 0 and now - last < interval * 2:
+                _LOGGER.log(
+                    CALC_LEVEL,
+                    "Abfrage %s verschoben, noch %.1fs Ruhezeit nach dem "
+                    "letzten Schreibkommando",
+                    name,
+                    remaining,
+                )
+                return
+
             self._poll_last[name] = now
             _LOGGER.debug("Polling faellig: %s (alle %ss)", name, interval)
             if func():
@@ -1289,6 +1324,7 @@ class Bridge:
     def _poll(self) -> None:
         """Alle Abfragen einmal ausfuehren (Button *Refresh data*)."""
         _LOGGER.debug("Vollstaendige Abfrage aller Gruppen")
+        self._wait_for_write_quiet()
         steps: list[Callable[[], bool]] = [
             self._step_battery,
             self._step_pv,
@@ -1337,6 +1373,32 @@ class Bridge:
     # =================================================================
     # Hilfsfunktionen
     # =================================================================
+    def _note_write(self) -> None:
+        """Zeitpunkt des letzten Schreibkommandos merken.
+
+        Direkt nach einem ES.SetMode (und den uebrigen Set-Befehlen) ist der
+        Speicher ein paar Sekunden beschaeftigt und laesst Statusabfragen ins
+        Leere laufen. Waehrend dieser Ruhezeit wird nicht abgefragt.
+        """
+        self._last_write = time.monotonic()
+
+    def _write_quiet_remaining(self) -> float:
+        quiet = self.s.poll_quiet_after_write
+        if quiet <= 0 or self._last_write <= 0:
+            return 0.0
+        return max(0.0, quiet - (time.monotonic() - self._last_write))
+
+    def _wait_for_write_quiet(self) -> None:
+        """Vor einer angeforderten Abfrage die Ruhezeit abwarten."""
+        remaining = self._write_quiet_remaining()
+        if remaining > 0:
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Warte %.1fs Ruhezeit nach dem letzten Schreibkommando",
+                remaining,
+            )
+            self._sleep_with_commands(remaining)
+
     def _query(
         self,
         method: str,

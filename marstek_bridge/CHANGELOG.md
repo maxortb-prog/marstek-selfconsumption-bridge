@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.23 - 2026-09-28
+
+- Neue Option `poll_quiet_after_write` (Standard 3 s): nach einem
+  Schreibkommando (`ES.SetMode`, `DOD.SET`, `Ble.Adv`, `Led.Ctrl`) wird keine
+  Statusabfrage gestartet. Der Speicher ist direkt danach beschaeftigt und
+  liess Abfragen sporadisch in den Timeout laufen. Eine ueberfaellige Abfrage
+  laeuft trotzdem, sobald sie das Doppelte ihres Intervalls ueberschreitet.
+- **Fix:** Schlug das Senden eines Regelkommandos fehl, hat die Bridge den
+  neuen Sollwert trotzdem intern uebernommen. Der Speicher lief weiter mit dem
+  alten Wert, waehrend der naechste Regelschritt von einem Wert ausging, den
+  das Geraet nie bekommen hat. Der Sollwert wird jetzt zurueckgesetzt und der
+  Regelwert erneut vorgemerkt.
+
 ## 0.0.22 - 2026-09-28
 
 - Der Button *Apply mode* liest den Modus nur noch nach, wenn

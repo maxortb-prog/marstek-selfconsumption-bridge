@@ -43,6 +43,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "request_timeout": 1.0,
         "request_retries": 2,
         "request_max_time": 10.0,
+        "poll_quiet_after_write": 3.0,
         "poll_enabled": True,
         "poll_interval_es_status": 10,
         "poll_interval_battery": 300,
@@ -129,6 +130,7 @@ class Settings:
     request_timeout: float = 1.0
     request_retries: int = 2
     request_max_time: float = 10.0
+    poll_quiet_after_write: float = 3.0
     poll_enabled: bool = True
     poll_interval_es_status: int = 10
     poll_interval_battery: int = 300
