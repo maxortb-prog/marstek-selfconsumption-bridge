@@ -6,7 +6,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import __version__
-from .const import COMM_FAIL, COMM_OK, GROUP_TITLES, GRP_SYSTEM, SELECTABLE_MODES
+from .const import (
+    COMM_FAIL,
+    COMM_INIT,
+    COMM_OK,
+    GROUP_TITLES,
+    GRP_SYSTEM,
+    SELECTABLE_MODES,
+)
 
 DIAG = "diagnostic"
 CONF = "config"
@@ -75,7 +82,7 @@ SYSTEM_ENTITIES: list[Ent] = [
         "Communication established",
         device_class="enum",
         icon="mdi:lan-connect",
-        extra={"options": [COMM_OK, COMM_FAIL]},
+        extra={"options": [COMM_OK, COMM_FAIL, COMM_INIT]},
     ),
     Ent(
         "comm_ok",

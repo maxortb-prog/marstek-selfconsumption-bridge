@@ -29,17 +29,26 @@ configuration:
     name: Kommunikation
     description: >-
       Zeitverhalten der UDP-Kommunikation und des Watchdogs.
-      request_delay: Pause zwischen zwei Kommandos in Sekunden, der Speicher
-      verträgt keine parallelen Anfragen.
+      request_delay: Mindestpause zwischen zwei UDP-Anfragen in Sekunden. Gilt
+      fuer alles: Polling, Regelkommandos, Keepalive und die Refresh-Buttons.
+      Der Speicher antwortet sonst verspaetet und die Anfrage laeuft in einen
+      Timeout, obwohl er erreichbar ist.
       request_timeout: Timeout je einzelnem Versuch.
       request_retries: 0 = nur ein Versuch, ein Timeout wird verworfen und löst
       KEINEN Watchdog aus. Größer 0 = so viele Wiederholungen, schlägt auch der
       letzte Versuch fehl, wird der Watchdog ausgelöst.
       request_max_time: hartes Limit über alle Versuche einer Nachricht, bei
       Überschreitung greift ebenfalls der Watchdog.
-      poll_enabled: zyklisches Abfragen ein oder aus. Aus = es wird nur nach dem
-      Start und über die Refresh-Buttons abgefragt.
-      poll_interval: Abstand zwischen zwei Polling-Zyklen in Sekunden.
+      poll_enabled: Hauptschalter fuer das zyklische Abfragen. Aus = es wird
+      nur nach dem Start und über die Refresh-Buttons abgefragt, etwa aus einer
+      HA-Automation heraus.
+      poll_interval_es_status, poll_interval_battery, poll_interval_pv,
+      poll_interval_mode, poll_interval_em: Intervall je Abfrage in Sekunden,
+      0 schaltet die jeweilige Abfrage ab. Die Abfragen sind unterschiedlich
+      ergiebig: ES.GetStatus liefert die laufenden Leistungswerte,
+      Bat.GetStatus vor allem die Temperatur, ES.GetMode ist nach dem Start
+      meist unveraendert und PV.GetStatus steckt in Teilen schon in
+      ES.GetStatus.
   additions_status_requests:
     name: Zusätzliche Abfragen und Startwerte
     description: >-
@@ -122,6 +131,9 @@ configuration:
     name: Allgemein
     description: >-
       Watchdog und Betriebsverhalten des Add-ons.
+      watchdog_failure_threshold gilt auch fuer die Initialisierung: bricht sie
+      so oft hintereinander mit einem Timeout ab, meldet der Health-Endpoint
+      unhealthy und Communication established wechselt auf FAIL.
       restore_state: stellt nach einem Neustart den Deckel (Passive power), den
       Countdown, den Schalter der Selbstregelung, den vorgemerkten Modus und
       den zuletzt berechneten Sollwert wieder her. Meldet das Geraet in

@@ -13,6 +13,7 @@ from typing import Any
 from . import __project__, __version__
 from .const import (
     COMM_FAIL,
+    COMM_INIT,
     COMM_OK,
     GROUP_TITLES,
     GRP_BATTERY,
@@ -73,8 +74,10 @@ class Bridge:
         self._running = True
         self._initialized = False
         self._watchdog_failures = 0
+        self._init_failures = 0
+        self._last_query_timed_out = False
         self._discovered: set[str] = set()
-        self._last_poll = 0.0
+        self._poll_last: dict[str, float] = {}
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
         self._last_regulation_input: float | None = None
@@ -108,6 +111,7 @@ class Bridge:
             timeout=settings.request_timeout,
             retries=settings.request_retries,
             max_time=settings.request_max_time,
+            min_gap=settings.request_delay,
         )
         self.mqtt = MqttBridge(
             host=settings.mqtt_host,
@@ -136,7 +140,7 @@ class Bridge:
 
         self.states[GRP_SYSTEM].update(
             {
-                "communication": COMM_FAIL,
+                "communication": COMM_INIT,
                 "comm_ok": False,
                 "dod_value": settings.dod_value,
                 "ble_block": settings.ble_block_enable,
@@ -238,13 +242,23 @@ class Bridge:
             self.s.base_topic,
         )
         _LOGGER.info(
-            "Timing: delay=%ss timeout=%ss retries=%s max=%ss poll=%ss",
+            "Timing: delay=%ss timeout=%ss retries=%s max=%ss",
             self.s.request_delay,
             self.s.request_timeout,
             self.s.request_retries,
             self.s.request_max_time,
-            self.s.poll_interval,
         )
+        if self.s.poll_enabled:
+            aktiv = [
+                f"{name}={interval}s"
+                for name, interval, _ in self._poll_jobs()
+                if interval > 0
+            ]
+            _LOGGER.info(
+                "Polling: %s", ", ".join(aktiv) if aktiv else "alle Intervalle auf 0"
+            )
+        else:
+            _LOGGER.info("Polling deaktiviert - Abfragen nur ueber die Refresh-Buttons")
 
         if self.s.self_regulation_enabled:
             _LOGGER.info(
@@ -379,12 +393,21 @@ class Bridge:
                 return
             _LOGGER.info("[%s/%s] %s", index, len(steps), label)
             if not func():
+                # Ein Timeout heisst: das Geraet ist gerade nicht ansprechbar.
+                # Weiterlaufen kostet nur Zeit, denn die restlichen Schritte
+                # laufen genauso ins Leere. Also sofort abbrechen und warten,
+                # bis das Geraet nach Ablauf seiner cd_time wieder da ist.
+                if self._last_query_timed_out:
+                    self._abort_initialization(label)
+                    return
                 ok = False
             if index < len(steps):
                 self._sleep_with_commands(self.s.request_delay)
 
         if ok:
             self._initialized = True
+            self._init_failures = 0
+            self._reset_poll_timers()
             self.health.update(initialized=True)
             self._set_communication(True)
             _LOGGER.info(
@@ -395,9 +418,55 @@ class Bridge:
             self._set_communication(False, "Initialisierung unvollstaendig")
             _LOGGER.error(
                 "Initialisierung unvollstaendig - neuer Versuch in %.0fs",
-                max(5.0, self.s.poll_interval),
+                self._init_retry_delay(),
             )
-            self._sleep_with_commands(max(5.0, float(self.s.poll_interval)))
+            self._sleep_with_commands(self._init_retry_delay())
+
+    def _init_retry_delay(self) -> float:
+        """Wartezeit bis zum naechsten Init-Versuch: die doppelte cd_time.
+
+        Der Speicher schliesst den UDP-Port, wenn im Passive-Modus keine
+        Kommandos mehr kommen, und meldet sich erst nach Ablauf seines
+        Countdowns zurueck. Doppelt gewaehlt, damit der Versuch sicher in das
+        Zeitfenster danach faellt.
+        """
+        cd = self.states[GRP_ENERGY_CONTROL].get("passive_cd_time")
+        if not isinstance(cd, (int, float)) or cd <= 0:
+            cd = self.s.passive_cd_time_default
+        return max(2.0, float(cd) * 2.0)
+
+    def _abort_initialization(self, label: str) -> None:
+        """Init nach einem Timeout abbrechen und auf das Geraet warten."""
+        self._init_failures += 1
+        wait = self._init_retry_delay()
+        threshold = self.s.watchdog_failure_threshold
+
+        if self._init_failures >= threshold:
+            self._set_communication_state(
+                COMM_FAIL, f"{self._init_failures} Init-Versuche gescheitert"
+            )
+            self.health.update(device_ok=False, watchdog_failures=self._init_failures)
+            _LOGGER.error(
+                "Initialisierung bei %s abgebrochen (Timeout) - Versuch %s/%s "
+                "gescheitert. Health-Endpoint meldet unhealthy, der "
+                "Supervisor-Watchdog startet das Add-on neu. Naechster Versuch "
+                "in %.0fs",
+                label,
+                self._init_failures,
+                threshold,
+                wait,
+            )
+        else:
+            self._set_communication_state(COMM_INIT, f"Timeout bei {label}")
+            _LOGGER.warning(
+                "Initialisierung bei %s abgebrochen (Timeout) - das Geraet ist "
+                "nicht ansprechbar. Neuer Versuch in %.0fs (Versuch %s/%s)",
+                label,
+                wait,
+                self._init_failures,
+                threshold,
+            )
+        self._sleep_with_commands(wait)
 
     # -- einzelne Schritte ---------------------------------------------
     def _step_get_device(self) -> bool:
@@ -1158,22 +1227,61 @@ class Bridge:
             self._sleep(1.0)
             return
 
-        now = time.monotonic()
-        if (
-            self._initialized
-            and self.s.poll_enabled
-            and now - self._last_poll >= self.s.poll_interval
-        ):
-            self._poll()
+        self._run_due_polls()
 
         self._flush_regulation()
         self._check_regulation_timeout()
         self._passive_keepalive()
         self._sleep(0.2)
 
+    def _poll_jobs(self) -> list[tuple[str, int, Callable[[], bool]]]:
+        """Die einzeln taktbaren Abfragen samt ihrem Intervall.
+
+        Jede Abfrage hat ihr eigenes Intervall in Sekunden, ``0`` schaltet sie
+        ab. Das ist noetig, weil die Abfragen sehr unterschiedlich interessant
+        sind: ES.GetStatus liefert die laufenden Leistungswerte, Bat.GetStatus
+        vor allem die Temperatur, ES.GetMode ist nach dem Start meist statisch
+        und PV.GetStatus steckt in Teilen schon in ES.GetStatus.
+        """
+        return [
+            ("es_status", self.s.poll_interval_es_status, self._step_es_status),
+            ("battery", self.s.poll_interval_battery, self._step_battery),
+            ("pv", self.s.poll_interval_pv, self._step_pv),
+            ("mode", self.s.poll_interval_mode, self._step_es_mode),
+            ("em", self.s.poll_interval_em, self._step_em),
+        ]
+
+    def _reset_poll_timers(self) -> None:
+        """Nach der Init laufen alle Intervalle neu an."""
+        now = time.monotonic()
+        self._poll_last = {name: now for name, _, _ in self._poll_jobs()}
+
+    def _run_due_polls(self) -> None:
+        """Faellige Abfragen ausfuehren - hoechstens eine pro Durchlauf.
+
+        Der Rest kommt im naechsten Schleifendurchlauf (alle 0,2 s). So drueckt
+        ein gemeinsamer Faelligkeitszeitpunkt nicht mehrere Anfragen auf einmal
+        heraus; die Mindestpause des UDP-Clients haelt zusaetzlich Abstand zu
+        Regelkommandos und Keepalive.
+        """
+        if not self._initialized or not self.s.poll_enabled:
+            return
+        now = time.monotonic()
+        for name, interval, func in self._poll_jobs():
+            if interval <= 0:
+                continue
+            last = self._poll_last.get(name, 0.0)
+            if now - last < interval:
+                continue
+            self._poll_last[name] = now
+            _LOGGER.debug("Polling faellig: %s (alle %ss)", name, interval)
+            if func():
+                self._set_communication(True)
+            return
+
     def _poll(self) -> None:
-        self._last_poll = time.monotonic()
-        _LOGGER.debug("Polling-Zyklus")
+        """Alle Abfragen einmal ausfuehren (Button *Refresh data*)."""
+        _LOGGER.debug("Vollstaendige Abfrage aller Gruppen")
         steps: list[Callable[[], bool]] = [
             self._step_battery,
             self._step_pv,
@@ -1184,6 +1292,7 @@ class Bridge:
             steps.append(self._step_em)
 
         ok = True
+        now = time.monotonic()
         for index, func in enumerate(steps):
             if not self._running:
                 return
@@ -1191,6 +1300,7 @@ class Bridge:
                 ok = False
             if index < len(steps) - 1:
                 self._sleep_with_commands(self.s.request_delay)
+        self._poll_last = {name: now for name, _, _ in self._poll_jobs()}
         if ok:
             self._set_communication(True)
 
@@ -1230,6 +1340,9 @@ class Bridge:
         try:
             result = self.udp.request(method, params, with_instance=with_instance)
         except ApiError as err:
+            # Das Geraet hat geantwortet, nur inhaltlich ablehnend - das ist
+            # kein Grund, die Init-Sequenz abzubrechen.
+            self._last_query_timed_out = False
             _LOGGER.error("%s: %s", method, err)
             self.health.update(last_error=str(err))
             return None
@@ -1237,6 +1350,8 @@ class Bridge:
             self._handle_udp_error(method, err)
             return None
         self._watchdog_failures = 0
+        self._init_failures = 0
+        self._last_query_timed_out = False
         self.health.update(
             device_ok=True, watchdog_failures=0, last_success=_utcnow(), last_error=None
         )
@@ -1244,6 +1359,7 @@ class Bridge:
         return result
 
     def _handle_udp_error(self, method: str, err: UdpError) -> None:
+        self._last_query_timed_out = True
         self.health.update(last_error=f"{method}: {err}")
         if not err.trigger_watchdog:
             _LOGGER.warning(
@@ -1271,18 +1387,32 @@ class Bridge:
                 )
 
     def _set_communication(self, ok: bool, reason: str | None = None) -> None:
-        state = COMM_OK if ok else COMM_FAIL
+        self._set_communication_state(COMM_OK if ok else COMM_FAIL, reason)
+
+    def _set_communication_state(self, state: str, reason: str | None = None) -> None:
+        """Zustand der Entity *Communication established* setzen.
+
+        ``ON``   - Gespraech mit dem Geraet laeuft.
+        ``INIT`` - Bridge startet bzw. wartet darauf, dass das Geraet
+                   wieder ansprechbar wird.
+        ``FAIL`` - Geraet antwortet nicht mehr, der Watchdog hat ausgeloest.
+        """
         if self.states[GRP_SYSTEM].get("communication") != state:
-            if ok:
+            if state == COMM_OK:
                 _LOGGER.info("\033[1;32mCommunication established = ON\033[0m")
+            elif state == COMM_INIT:
+                _LOGGER.warning(
+                    "\033[1;33mCommunication established = INIT\033[0m%s",
+                    f" ({reason})" if reason else "",
+                )
             else:
                 _LOGGER.error(
                     "\033[1;31mCommunication established = FAIL\033[0m%s",
                     f" ({reason})" if reason else "",
                 )
         self.states[GRP_SYSTEM]["communication"] = state
-        self.states[GRP_SYSTEM]["comm_ok"] = ok
-        if ok:
+        self.states[GRP_SYSTEM]["comm_ok"] = state == COMM_OK
+        if state == COMM_OK:
             self.health.update(device_ok=True)
         self._publish_state(GRP_SYSTEM)
 

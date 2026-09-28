@@ -44,7 +44,11 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "request_retries": 2,
         "request_max_time": 10.0,
         "poll_enabled": True,
-        "poll_interval": 30,
+        "poll_interval_es_status": 10,
+        "poll_interval_battery": 300,
+        "poll_interval_pv": 0,
+        "poll_interval_mode": 0,
+        "poll_interval_em": 0,
     },
     "additions_status_requests": {
         "enable_em": False,
@@ -125,8 +129,12 @@ class Settings:
     request_timeout: float = 1.0
     request_retries: int = 2
     request_max_time: float = 10.0
-    poll_interval: int = 30
     poll_enabled: bool = True
+    poll_interval_es_status: int = 10
+    poll_interval_battery: int = 300
+    poll_interval_pv: int = 0
+    poll_interval_mode: int = 0
+    poll_interval_em: int = 0
     enable_em: bool = False
 
     # -- Initialwerte ------------------------------------------------------

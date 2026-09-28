@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.0.21 - 2026-09-28
+
+**Achtung: `poll_interval` entfaellt.** Nach dem Update einmal die Add-on
+Konfiguration oeffnen und speichern.
+
+- Jede Abfrage hat ein eigenes Intervall: `poll_interval_es_status` (10 s),
+  `poll_interval_battery` (300 s), `poll_interval_pv`, `poll_interval_mode`
+  und `poll_interval_em` (je 0 = aus). Bisher lief ein gemeinsamer Zyklus ueber
+  alle Abfragen, auch ueber die wenig ergiebigen.
+- Pro Schleifendurchlauf wird hoechstens eine faellige Abfrage ausgefuehrt.
+- `request_delay` ist jetzt eine Mindestpause zwischen **allen** UDP-Anfragen,
+  nicht nur zwischen Polling-Schritten. Damit kollidieren Abfragen nicht mehr
+  mit Regelkommandos oder dem Keepalive, was bisher zu Timeouts und
+  verspaeteten Antworten ("Ignoriere Antwort mit fremder id") gefuehrt hat.
+- Verspaetete Antworten werden vor jeder neuen Anfrage aus dem Empfangspuffer
+  geworfen.
+- `poll_enabled` steht wieder standardmaessig auf `true`, da die Intervalle
+  jetzt einzeln steuerbar sind.
+
+## 0.0.20 - 2026-09-28
+
+- Die Initialisierung bricht beim ersten Timeout sofort ab, statt die
+  restlichen Schritte ebenfalls ins Leere laufen zu lassen. Danach wartet die
+  Bridge die doppelte `cd_time` und beginnt von vorn. Hintergrund: der Speicher
+  schliesst seinen UDP-Port, wenn im Passive-Modus keine Kommandos mehr kommen.
+- Eine Fehlerantwort des Geraets (JSON-RPC-Error) bricht nicht ab - nur
+  ausbleibende Antworten.
+- Nach `watchdog_failure_threshold` Abbruechen in Folge meldet der
+  Health-Endpoint unhealthy und der Supervisor startet das Add-on neu.
+- *Communication established* hat einen dritten Zustand `INIT`: Bridge startet
+  bzw. wartet auf das Geraet. `FAIL` bleibt dem ausgeloesten Watchdog
+  vorbehalten.
+- `poll_enabled` steht jetzt standardmaessig auf `false`. Das zyklische Polling
+  bleibt erhalten, wird aber meist nicht gebraucht, wenn die Abfragen ueber die
+  Refresh-Buttons aus Home Assistant angestossen werden.
+
+## 0.0.19 - 2026-09-28
+
+- Das Log-Level `calc` wird in Pink statt dunklem Magenta ausgegeben. Auf
+  dunklem Hintergrund war die bisherige Farbe schlecht lesbar.
+
 ## 0.0.18 - 2026-09-28
 
 - Neues Log-Level `calc` zwischen `debug` und `info`. Es zeigt zusaetzlich zu

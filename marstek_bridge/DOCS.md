@@ -47,12 +47,16 @@ Leerer Benutzername = anonyme Verbindung.
 
 | Option | Default | Beschreibung |
 |---|---|---|
-| `request_delay` | `1.0` | Pause zwischen zwei Abfragen in Sekunden. |
+| `request_delay` | `1.0` | **Mindestpause zwischen allen UDP-Anfragen** - Polling, Regelkommandos, Keepalive und Refresh-Buttons. |
 | `request_timeout` | `1.0` | Timeout je Versuch. |
 | `request_retries` | `2` | `0` = kein Retry, Nachricht wird verworfen und löst **keinen** Watchdog aus. `>0` = Wiederholungen, bei endgültigem Fehlschlag Watchdog. |
 | `request_max_time` | `10.0` | Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten, greift der Watchdog (Sonderfall). |
-| `poll_interval` | `30` | Sekunden zwischen zwei Polling-Zyklen. |
-| `poll_enabled` | `true` | Polling abschaltbar (dann nur Refresh-Button). |
+| `poll_enabled` | `true` | Hauptschalter für das zyklische Polling. |
+| `poll_interval_es_status` | `10` | `ES.GetStatus` - die laufenden Leistungswerte. |
+| `poll_interval_battery` | `300` | `Bat.GetStatus` - vor allem die Temperatur. |
+| `poll_interval_pv` | `0` | `PV.GetStatus` - aus, steckt in Teilen in `ES.GetStatus`. |
+| `poll_interval_mode` | `0` | `ES.GetMode` - aus, nach dem Start meist unverändert. |
+| `poll_interval_em` | `0` | `EM.GetStatus` - aus. |
 | `enable_em` | `false` | Zusätzlich `EM.GetStatus` abfragen → Gerät *Marstek Energy Meter*. |
 
 **Message-IDs:** Jede gesendete Nachricht bekommt eine eigene laufende `id`
@@ -101,7 +105,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | Option | Default | Beschreibung |
 |---|---|---|
 | `restore_state` | `true` | Steuerzustand über Neustarts hinweg sichern und wiederherstellen. |
-| `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen, bis `/health` 503 liefert (verhindert Neustart-Schleifen bei kurzen Aussetzern). |
+| `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen bzw. gescheiterter Init-Versuche, bis `/health` 503 liefert. |
 | `persist_device_info` | `true` | `device_ble_mac`/`device_type` in die Add-on-Optionen zurückschreiben. |
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
 | `log_level` | `info` | `trace` \| `debug` \| `calc` \| `info` \| `warning` \| `error`. Siehe unten. |
@@ -331,12 +335,72 @@ Zum Zurücksetzen das Add-on stoppen, in `/data/marstek_state.json` den
 Schlüssel `pv_energy_wh` löschen oder auf den gewünschten Wert setzen und das
 Add-on wieder starten.
 
+## Polling
+
+Jede Abfrage hat ihr eigenes Intervall in Sekunden, `0` schaltet sie ab. Der
+Grund: Die Abfragen sind sehr unterschiedlich ergiebig. `ES.GetStatus` trägt
+die laufenden Leistungswerte und lohnt oft, `Bat.GetStatus` liefert vor allem
+die Temperatur und reicht alle paar Minuten, `ES.GetMode` ändert sich nach dem
+Start kaum, und `PV.GetStatus` ist nur interessant, wenn die einzelnen Strings
+zählen - die Summe steckt schon in `ES.GetStatus`.
+
+Pro Schleifendurchlauf wird höchstens **eine** fällige Abfrage ausgeführt, der
+Rest folgt im nächsten Durchlauf. So drücken gleichzeitig fällige Intervalle
+nicht mehrere Anfragen auf einmal heraus.
+
+Der Button *Refresh data* im Gerät *Marstek Energy Control* fragt weiterhin
+alle Gruppen auf einmal ab, unabhängig von den Intervallen.
+
+### Mindestpause zwischen Anfragen
+
+`request_delay` gilt seit 0.0.21 für **alle** UDP-Anfragen, nicht mehr nur
+zwischen Polling-Schritten. Der UDP-Client merkt sich, wann er zuletzt gesendet
+hat, und wartet vor jeder Anfrage, bis die Pause um ist - egal ob sie vom
+Polling, von der Regelung, vom Keepalive oder von einem Refresh-Button kommt.
+
+Ohne das kollidieren Abfragen mit Regelkommandos: Der Speicher antwortet dann
+erst nach mehreren Sekunden, die Anfrage ist längst im Timeout, und die
+verspätete Antwort taucht als *„Ignoriere Antwort mit fremder id"* auf.
+Verspätete Antworten werden jetzt zusätzlich vor jeder neuen Anfrage aus dem
+Puffer geworfen.
+
+Der Preis: Ein Regelkommando kann sich um bis zu `request_delay` verzögern.
+
+## Abbruch der Initialisierung
+
+Der Speicher schließt seinen UDP-Port, wenn im Passive-Modus keine Kommandos
+mehr eintreffen, und meldet sich erst nach Ablauf seines Countdowns zurück -
+dann meist im Auto-Modus. Genau das passiert bei einem Neustart der Bridge.
+
+Läuft deshalb ein Schritt der Init-Sequenz in einen Timeout, bricht die Bridge
+**sofort ab**, statt die restlichen Schritte ebenfalls ins Leere laufen zu
+lassen. Danach wartet sie die **doppelte `cd_time`** und beginnt von vorn.
+
+Eine Antwort des Geräts mit einem JSON-RPC-Fehler bricht *nicht* ab - das Gerät
+ist ja ansprechbar, es lehnt nur diesen einen Befehl ab.
+
+Nach `watchdog_failure_threshold` Abbrüchen in Folge meldet der
+Health-Endpoint 503, der Supervisor startet das Add-on neu, und
+*Communication established* wechselt von `INIT` auf `FAIL`. Versucht wird
+danach trotzdem unbegrenzt weiter, falls der Watchdog nicht aktiviert ist.
+
+```
+18:19:57  [1/10] Marstek.GetDevice
+18:19:59  Initialisierung bei Marstek.GetDevice abgebrochen (Timeout) -
+          das Geraet ist nicht ansprechbar. Neuer Versuch in 12s (Versuch 1/2)
+18:20:13  Communication established = FAIL (2 Init-Versuche gescheitert)
+18:20:41  Initialisierung abgeschlossen - Communication established = ON
+```
+
 ## Kommunikationsstatus in Automationen
 
 | Entity | Zustaende | geeignet fuer |
 |---|---|---|
-| `sensor.<...>_system_communication` - *Communication established* | `ON` / `FAIL` | Anzeige, Benachrichtigungstext |
+| `sensor.<...>_system_communication` - *Communication established* | `ON` / `INIT` / `FAIL` | Anzeige, Benachrichtigungstext |
 | `binary_sensor.<...>_system_comm_ok` - *Device connectivity* | `on` / `off` (`device_class: connectivity`) | Bedingungen und Trigger in Automationen |
+
+`INIT` bedeutet: die Bridge startet oder wartet darauf, dass das Gerät wieder
+ansprechbar wird. `FAIL` heißt: der Watchdog hat ausgelöst.
 
 ```yaml
 # Benachrichtigen, sobald der Speicher nicht mehr antwortet
@@ -346,6 +410,11 @@ triggers:
     to: "off"
     for: "00:02:00"
 ```
+
+Der Binärsensor ist dafür der robustere Trigger: Er ist genau dann `on`, wenn
+der Zustand `ON` lautet, und deckt `INIT` und `FAIL` gemeinsam ab. So bekommst
+du auch dann eine Meldung, wenn die Bridge dauerhaft in der Init-Schleife
+hängt und nie bis `FAIL` kommt.
 
 ## Fehlersuche
 

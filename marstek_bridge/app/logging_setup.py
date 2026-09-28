@@ -49,7 +49,7 @@ DIM = "\033[2m"
 LEVEL_COLORS: dict[int, str] = {
     TRACE_LEVEL: "\033[38;5;245m",   # grau
     logging.DEBUG: "\033[36m",       # cyan
-    CALC_LEVEL: "\033[35m",          # magenta
+    CALC_LEVEL: "\033[38;5;213m",    # pink, auf dunklem Hintergrund gut lesbar
     logging.INFO: "\033[32m",        # gruen
     logging.WARNING: "\033[33m",     # gelb
     logging.ERROR: "\033[31m",       # rot

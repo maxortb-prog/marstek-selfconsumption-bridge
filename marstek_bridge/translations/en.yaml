@@ -28,17 +28,25 @@ configuration:
     name: Communication
     description: >-
       Timing of the UDP communication and of the watchdog.
-      request_delay: pause between two commands in seconds, the battery does not
-      handle parallel requests.
+      request_delay: minimum pause between two UDP requests in seconds. Applies
+      to everything: polling, control commands, keepalive and the refresh
+      buttons. Otherwise the battery replies late and the request runs into a
+      timeout although it is reachable.
       request_timeout: timeout per single attempt.
       request_retries: 0 = single attempt, a timeout is discarded and does NOT
       trigger the watchdog. Greater than 0 = that many retries, if the last
       attempt also fails the watchdog is triggered.
       request_max_time: hard limit across all attempts of one message, exceeding
       it also triggers the watchdog.
-      poll_enabled: cyclic polling on or off. Off = data is only read at
-      start-up and through the refresh buttons.
-      poll_interval: time between two polling cycles in seconds.
+      poll_enabled: master switch for cyclic polling. Off = data is only read
+      at start-up and through the refresh buttons, e.g. from a Home Assistant
+      automation.
+      poll_interval_es_status, poll_interval_battery, poll_interval_pv,
+      poll_interval_mode, poll_interval_em: interval per query in seconds,
+      0 disables that query. The queries differ a lot in value: ES.GetStatus
+      carries the live power figures, Bat.GetStatus mainly the temperature,
+      ES.GetMode rarely changes after start-up, and parts of PV.GetStatus are
+      already contained in ES.GetStatus.
   additions_status_requests:
     name: Additional requests and start values
     description: >-
@@ -120,6 +128,9 @@ configuration:
     name: General
     description: >-
       Watchdog and add-on behaviour.
+      watchdog_failure_threshold also applies to initialisation: if it aborts
+      this many times in a row with a timeout, the health endpoint reports
+      unhealthy and Communication established switches to FAIL.
       restore_state: restores the cap (passive power), the countdown, the
       self-regulation switch, the pre-selected mode and the last computed
       setpoint after a restart. If the device still reports passive mode in

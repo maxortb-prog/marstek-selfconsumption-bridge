@@ -81,3 +81,5 @@ SELECTABLE_MODES = [MODE_AUTO, MODE_AI, MODE_PASSIVE, MODE_UPS]
 
 COMM_OK = "ON"
 COMM_FAIL = "FAIL"
+# Bridge startet bzw. wartet auf das Geraet - Init noch nicht durchgelaufen.
+COMM_INIT = "INIT"

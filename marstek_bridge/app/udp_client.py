@@ -41,6 +41,10 @@ class MarstekUdpClient:
 
     * Jede gesendete Nachricht bekommt eine eigene, laufende ID (0..999).
     * Jede Methode verwendet ihre eigene Instance-ID (``params.id``).
+    * Zwischen zwei Anfragen liegt immer mindestens ``min_gap`` Sekunden -
+      unabhaengig davon, wer sie ausloest (Polling, Regelung, Keepalive,
+      manuelle Abfrage). Der Speicher kommt sonst nicht hinterher und
+      antwortet zu spaet.
     * ``retries == 0``  -> genau ein Versuch, Timeout wird verworfen,
       der Watchdog wird NICHT ausgeloest.
     * ``retries > 0``   -> Wiederholungen; scheitern alle bzw. laeuft das
@@ -56,6 +60,7 @@ class MarstekUdpClient:
         timeout: float = 1.0,
         retries: int = 2,
         max_time: float = 10.0,
+        min_gap: float = 0.0,
     ) -> None:
         self.host = host
         self.port = port
@@ -63,7 +68,9 @@ class MarstekUdpClient:
         self.timeout = timeout
         self.retries = retries
         self.max_time = max_time
+        self.min_gap = min_gap
 
+        self._last_exchange = 0.0
         self._lock = threading.Lock()
         self._msg_id = MSG_ID_MIN - 1
         self._sock: socket.socket | None = None
@@ -80,6 +87,26 @@ class MarstekUdpClient:
         self._sock = sock
         _LOGGER.debug("UDP-Socket gebunden auf 0.0.0.0:%s", sock.getsockname()[1])
         return sock
+
+    def _drain(self, sock: socket.socket) -> None:
+        """Alte, verspaetet eingetroffene Antworten aus dem Puffer werfen."""
+        sock.setblocking(False)
+        try:
+            while True:
+                try:
+                    data, sender = sock.recvfrom(8192)
+                except (BlockingIOError, InterruptedError):
+                    return
+                except OSError:
+                    return
+                _LOGGER.debug(
+                    "Verspaetete Antwort von %s verworfen (%s Bytes)",
+                    sender[0],
+                    len(data),
+                )
+        finally:
+            sock.setblocking(True)
+            sock.settimeout(self.timeout)
 
     def close(self) -> None:
         if self._sock is not None:
@@ -169,17 +196,31 @@ class MarstekUdpClient:
         attempts: int,
     ) -> dict[str, Any]:
         sock = self._ensure_socket()
+
+        # Mindestpause zur vorherigen Anfrage einhalten.
+        if self.min_gap > 0:
+            wait = self.min_gap - (time.monotonic() - self._last_exchange)
+            if wait > 0:
+                _LOGGER.trace("Warte %.2fs bis zur naechsten Anfrage", wait)  # type: ignore[attr-defined]
+                time.sleep(wait)
+
+        # Verspaetete Antworten der vorigen Anfrage wegwerfen, sonst werden sie
+        # erst beim naechsten Empfang aussortiert und kosten dort Zeit.
+        self._drain(sock)
+
         raw = json.dumps(message, separators=(",", ":")).encode("utf-8")
         _LOGGER.trace("TX %s:%s %s", addr[0], addr[1], raw.decode("utf-8"))  # type: ignore[attr-defined]
         try:
             sock.sendto(raw, addr)
         except OSError as err:
+            self._last_exchange = time.monotonic()
             raise UdpError(f"Senden fehlgeschlagen: {err}") from err
 
         deadline = time.monotonic() + self.timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                self._last_exchange = time.monotonic()
                 raise UdpTimeout(
                     f"Timeout nach {self.timeout}s (id={message['id']})"
                 )
@@ -223,6 +264,7 @@ class MarstekUdpClient:
                 raise UdpError(f"{method}: Antwort ohne 'result'")
             result.setdefault("_src", response.get("src"))
             result.setdefault("_sender_ip", sender[0])
+            self._last_exchange = time.monotonic()
             _LOGGER.debug(
                 "%s ok (id=%s, Versuch %s/%s)", method, message["id"], attempt, attempts
             )
