@@ -91,7 +91,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
-| `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln und nur abseits der Anschläge). |
+| `self_regulation_deadband` | `10` | Abweichung des **Netzwerts** ab der Reserve, unter der nicht geregelt wird (nur beim Hochregeln). |
 | `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
 | `self_regulation_min_interval_down` | `5.0` | Minimaler Abstand beim Runterregeln. |
 | `self_regulation_settle_time` | `10.0` | Totzeit, über die eine gesendete Änderung als „in der Messung noch nicht sichtbar" gilt. `0` = aus. |
@@ -159,11 +159,13 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   prüft jedes ausgehende Kommando den Sollwert gegen den aktuellen Deckel, auch
   das des Keepalives. Ein angehobener Deckel wird beim nächsten regulären
   Regelschritt genutzt.
-* **Am Anschlag gilt kein Totband.** Würde der berechnete Schritt über den
-  Deckel hinaus- oder unter 0 W gehen, wird der begrenzte Wert auch dann
-  gesendet, wenn er weniger als `deadband` vom aktuellen Sollwert entfernt ist.
-  Sonst bliebe der Regler knapp unter dem Deckel stehen, obwohl noch eine große
-  Abweichung offen ist - und käme dort nie wieder heraus.
+* **Das Totband gilt für den Netzwert, nicht für den Sollwert.** Die Schwelle
+  ist `reserve + deadband`: bei Reserve 8 W und Totband 5 W wird ab 13 W
+  Netzbezug nachgeregelt. Würde das Totband auf den berechneten Sollwert
+  wirken, hinge seine Wirkung an `step_gain` - bei `gain 0.5` entspräche ein
+  Totband von 5 W am Ausgang einer Abweichung von 10 W am Eingang.
+* **Ändert sich der Sollwert nicht**, wird nichts gesendet - etwa wenn er
+  bereits am Deckel steht.
 * **Untergrenze** ist fest 0 W. Der Sollwert wird nie negativ, es wird also
   weder ins Netz eingespeist noch aus dem Netz geladen.
 * **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der

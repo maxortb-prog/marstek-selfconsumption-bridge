@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.25 - 2026-09-28
+
+- **Das Totband wirkt jetzt auf die Abweichung des Netzwerts statt auf den
+  berechneten Sollwert.** Die Schwelle ist damit `reserve + deadband` und
+  unabhaengig von `step_gain`: bei Reserve 8 W und Totband 5 W wird ab 13 W
+  Netzbezug nachgeregelt. Bisher entsprach ein Totband von 5 W bei `gain 0.5`
+  einer Abweichung von 10 W - der Regler blieb stehen, obwohl dauerhaft zu viel
+  bezogen wurde.
+- Statt der Sonderregel "am Anschlag gilt kein Totband" wird geprueft, ob sich
+  der Sollwert ueberhaupt aendert. Aendert er sich nicht, wird nicht gesendet.
+
 ## 0.0.24 - 2026-09-28
 
 - *Apply mode* sendet nichts mehr, wenn der Passive-Modus bereits laeuft und

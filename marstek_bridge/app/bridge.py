@@ -1082,10 +1082,11 @@ class Bridge:
 
         Ein Schritt nach unten darf Totband und Mindestabstand ueberspringen
         (``self_regulation_fast_down``), damit auf einen plotzlichen Lastabfall
-        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv - mit einer
-        Ausnahme: liegt das Ziel am Anschlag (Deckel oder 0 W), wird das Totband
-        ignoriert. Sonst bliebe der Sollwert knapp unter dem Deckel haengen,
-        obwohl noch reichlich Abweichung offen ist.
+        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv.
+
+        Das Totband bezieht sich auf die Abweichung des Netzwerts. Aendert sich
+        der Sollwert trotz ausreichender Abweichung nicht - etwa weil er schon
+        am Deckel steht - wird ebenfalls nicht gesendet.
         """
         if self._pending_regulation is None or not self._regulation_active():
             return
@@ -1109,20 +1110,30 @@ class Bridge:
         else:
             if since_send < self.s.self_regulation_min_interval:
                 return  # Wert bleibt vorgemerkt und wird spaeter gesendet
-            if (
-                last is not None
-                and not self._last_target_saturated
-                and abs(out - int(last)) < self.s.self_regulation_deadband
-            ):
+            # Das Totband gilt fuer die Abweichung des Netzwerts, nicht fuer
+            # den berechneten Sollwert. Sonst haengt seine Wirkung an der
+            # Verstaerkung: bei gain 0.5 entspraeche ein Totband von 5 W am
+            # Ausgang einer Abweichung von 10 W am Eingang.
+            error = float(self._last_calc.get("error", 0.0))
+            if abs(error) < self.s.self_regulation_deadband:
                 self._pending_regulation = None
                 _LOGGER.log(
                     CALC_LEVEL,
-                    "Sollwert %s W liegt innerhalb des Totbands (%s W) - "
+                    "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
                     "kein Kommando",
-                    out,
+                    error,
                     self.s.self_regulation_deadband,
                 )
                 return
+
+        if last is not None and out == int(last):
+            self._pending_regulation = None
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Sollwert bleibt bei %s W - kein Kommando noetig",
+                out,
+            )
+            return
 
         self._pending_regulation = None
         ctrl["regulation_output"] = out

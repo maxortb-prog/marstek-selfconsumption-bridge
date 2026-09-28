@@ -98,10 +98,12 @@ configuration:
       reserve is better than the reserve itself. 0 = every export is corrected
       immediately; a small negative value tolerates brief excursions if
       measurement noise makes the controller too twitchy.
-      self_regulation_deadband: deviations smaller than this value in watts do
-      not trigger a new command. Applies to upward steps only and not at the
-      limits - a value that sits at the cap or at 0 W is sent even if the
-      difference is small.
+      self_regulation_deadband: deviation of the grid value in watts below
+      which nothing is regulated, measured from the reserve. Reserve 8 plus
+      deadband 5 therefore means: correction starts at 13 W of grid import. It
+      deliberately refers to the measurement and not to the computed setpoint,
+      otherwise its effect would depend on step_gain. Applies to upward steps
+      only while fast_down is enabled.
       self_regulation_min_interval: minimum time between two control commands
       in seconds. Applies to upward steps only.
       self_regulation_min_interval_down: minimum time between downward steps.

@@ -102,10 +102,12 @@ configuration:
       der Reserve ist besser als die Reserve selbst. 0 = jede Einspeisung wird
       sofort korrigiert; ein kleiner negativer Wert toleriert kurze Ausreisser
       ins Negative, falls die Regelung durch Messrauschen zu nervoes wird.
-      self_regulation_deadband: Abweichungen kleiner als dieser Wert in Watt
-      loesen kein neues Kommando aus. Gilt nur beim Hochregeln und nur abseits
-      der Anschlaege - liegt der berechnete Wert am Deckel oder bei 0 W, wird er
-      auch bei kleiner Differenz gesendet.
+      self_regulation_deadband: Abweichung des Netzwerts in Watt, unter der
+      nicht geregelt wird - gemessen ab der Reserve. Reserve 8 plus Totband 5
+      heisst also: erst ab 13 W Netzbezug wird nachgeregelt. Der Wert bezieht
+      sich bewusst auf die Messung und nicht auf den berechneten Sollwert, sonst
+      haenge seine Wirkung an step_gain. Gilt nur beim Hochregeln, solange
+      fast_down aktiv ist.
       self_regulation_min_interval: minimaler Abstand zwischen zwei
       Regelbefehlen in Sekunden. Gilt nur beim Hochregeln.
       self_regulation_min_interval_down: minimaler Abstand beim Runterregeln.
