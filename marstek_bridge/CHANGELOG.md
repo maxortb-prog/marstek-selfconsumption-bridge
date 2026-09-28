@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.24 - 2026-09-28
+
+- *Apply mode* sendet nichts mehr, wenn der Passive-Modus bereits laeuft und
+  die Selbstregelung aktiv ist. Eine Automation, die zyklisch auf Apply
+  drueckt, hat bisher den zuletzt berechneten - und damit oft schon veralteten
+  - Sollwert dazwischengeschoben und mit dem naechsten Regelkommando
+  kollidiert. Fuer einen echten Moduswechsel bleibt der Button unveraendert.
+- Der Zielmodus wird nur noch protokolliert, wenn er sich tatsaechlich aendert.
+
 ## 0.0.23 - 2026-09-28
 
 - Neue Option `poll_quiet_after_write` (Standard 3 s): nach einem

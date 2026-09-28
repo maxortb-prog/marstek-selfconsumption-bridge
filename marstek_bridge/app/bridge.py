@@ -702,6 +702,33 @@ class Bridge:
             }
         raise ValueError(f"Unbekannter Modus: {mode}")
 
+    def _handle_apply_request(self) -> None:
+        """Druck auf *Apply mode*.
+
+        Laeuft der Passive-Modus bereits und ist die Selbstregelung aktiv, wird
+        **nicht** gesendet: Zeitpunkt und Leistung bestimmt dann die interne
+        Regelschleife samt Keepalive. Ein Apply von aussen wuerde den zuletzt
+        berechneten - womoeglich schon veralteten - Sollwert dazwischenschieben
+        und mit dem naechsten Regelkommando kollidieren.
+
+        Fuer einen echten Moduswechsel bleibt der Button unveraendert wirksam.
+        """
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        target = ctrl.get("target_mode")
+        if (
+            self._regulation_active()
+            and target == MODE_PASSIVE
+            and ctrl.get("applied_mode") == MODE_PASSIVE
+        ):
+            _LOGGER.info(
+                "Apply ignoriert - Passive laeuft bereits, die Selbstregelung "
+                "bestimmt Zeitpunkt und Leistung selbst"
+            )
+            if ctrl.get("regulation_input") is not None:
+                self._pending_regulation = float(ctrl["regulation_input"])
+            return
+        self._apply_mode()
+
     def _apply_mode(self, refresh: bool = True) -> bool:
         """Den vorgemerkten Modus an das Geraet senden.
 
@@ -1196,11 +1223,12 @@ class Bridge:
             if value not in SELECTABLE_MODES:
                 _LOGGER.warning("Unbekannter Modus '%s' ignoriert", value)
                 return
+            if ctrl.get("target_mode") != value:
+                _LOGGER.info(
+                    "Zielmodus '%s' vorgemerkt - mit 'Apply mode' aktivieren", value
+                )
             ctrl["target_mode"] = value
             self._publish_state(GRP_ENERGY_CONTROL)
-            _LOGGER.info(
-                "Zielmodus '%s' vorgemerkt - mit 'Apply mode' aktivieren", value
-            )
         elif suffix == f"{GRP_ENERGY_CONTROL}/passive_power/set":
             value = int(float(payload))
             ctrl["passive_power"] = max(
@@ -1217,7 +1245,7 @@ class Bridge:
         elif suffix == f"{GRP_ENERGY_CONTROL}/self_regulation/set":
             self._set_self_regulation(payload.strip().upper() == "ON")
         elif suffix == f"{GRP_ENERGY_CONTROL}/apply/set":
-            self._apply_mode()
+            self._handle_apply_request()
         elif suffix == f"{GRP_ENERGY_CONTROL}/refresh/set":
             self._poll()
         elif suffix in self._group_refresh_steps():

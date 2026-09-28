@@ -189,7 +189,9 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   Automation deaktiviert, Sensor tot), fällt der Sollwert auf 0 W.
 * **Voraussetzung:** Der Modus *Passive* muss über Select und Apply-Button
   aktiv sein. Solange ein anderer Modus läuft, wird der Regelwert nur
-  gespeichert und angezeigt.
+  gespeichert und angezeigt. Danach ist ein erneutes Apply weder nötig noch
+  wirksam - der Keepalive hält den Modus am Leben, und ein Apply von außen
+  würde nur einen veralteten Sollwert dazwischenschieben.
 
 Beispiel mit Reserve 12 W, Deckel 600 W, Standardparametern:
 
@@ -354,7 +356,10 @@ alle Gruppen auf einmal ab, unabhängig von den Intervallen.
 
 Der Button *Apply mode* liest den Modus nach dem Umschalten nach, damit die
 Gruppe *Marstek Energy Mode* den neuen Zustand zeigt - aber nur, wenn
-`poll_interval_mode` größer 0 ist. Sonst löst eine Automation, die zyklisch auf
+`poll_interval_mode` größer 0 ist. Läuft der Passive-Modus bereits **und** ist
+die Selbstregelung aktiv, sendet der Button gar nichts mehr: Zeitpunkt und
+Leistung bestimmt dann die Regelschleife samt Keepalive. Der zuletzt empfangene
+Regelwert wird lediglich für den nächsten Durchlauf vorgemerkt. Sonst löst eine Automation, die zyklisch auf
 Apply drückt, bei jedem Druck ein zusätzliches `ES.GetMode` aus.
 
 ### Ruhezeit nach Schreibkommandos
