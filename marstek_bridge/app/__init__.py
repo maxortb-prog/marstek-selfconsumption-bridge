@@ -1,4 +1,4 @@
 """Marstek for Self-consumption regulation (MQTT - UDP Bridge)."""
 
-__version__ = "0.0.25"
+__version__ = "0.0.26"
 __project__ = "Marstek for Self-consumption regulation (MQTT - UDP Bridge)"

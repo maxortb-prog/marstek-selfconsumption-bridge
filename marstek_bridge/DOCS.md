@@ -295,6 +295,13 @@ der Deckel *Passive power*, der Countdown, der Schalter *Self-regulation*, der
 vorgemerkte Modus und der zuletzt berechnete Sollwert. Geschrieben wird bei
 jeder Änderung.
 
+**Die Konfiguration gewinnt.** Unter `control_defaults` merkt sich die Bridge,
+welche Werte die Optionen `passive_power_default`, `passive_cd_time_default`
+und `self_regulation_enabled` beim Speichern hatten. Wurde eine davon seitdem
+geändert, wird der Konfigurationswert genommen statt des gespeicherten
+Laufzeitwerts - sonst bliebe eine Änderung in der Add-on-Oberfläche wirkungslos.
+Alle übrigen Optionen behalten ihren zur Laufzeit eingestellten Wert.
+
 Der Startwert der Regelung wird beim ersten `ES.GetMode` bestimmt:
 
 | Meldung des Geräts | Startwert |

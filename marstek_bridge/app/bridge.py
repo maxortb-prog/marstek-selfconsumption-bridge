@@ -162,6 +162,14 @@ class Bridge:
         "regulation_output",
     )
 
+    def _config_defaults(self) -> dict[str, Any]:
+        """Die Startwerte aus der Add-on Konfiguration zu den Steuerwerten."""
+        return {
+            "passive_power": self.s.passive_power_default,
+            "passive_cd_time": self.s.passive_cd_time_default,
+            "self_regulation": self.s.self_regulation_enabled,
+        }
+
     def _restore_control_state(self) -> None:
         """Steuerwerte aus dem State-File uebernehmen.
 
@@ -169,24 +177,53 @@ class Bridge:
         Selbstregelung, der vorgemerkte Modus und der zuletzt berechnete
         Sollwert. Bewusst *nicht* der zuletzt aktive Modus: ob das Geraet noch
         im Passive-Modus steht, weiss erst ES.GetMode.
+
+        Wurde die zugehoerige Option in der Add-on Konfiguration seit dem
+        Speichern geaendert, gewinnt die Konfiguration. Sonst waere eine
+        Aenderung an ``passive_cd_time_default`` und Co. wirkungslos, weil der
+        alte Laufzeitwert sie ueberschreibt.
         """
-        saved = load_state().get("control")
+        state = load_state()
+        saved = state.get("control")
         if not isinstance(saved, dict) or not saved:
             return
+        previous = state.get("control_defaults")
+        if not isinstance(previous, dict):
+            previous = {}
+        current = self._config_defaults()
+
         ctrl = self.states[GRP_ENERGY_CONTROL]
         taken: list[str] = []
+        skipped: list[str] = []
         for key in self.RESTORED_KEYS:
-            if key in saved and saved[key] is not None:
-                ctrl[key] = saved[key]
-                taken.append(f"{key}={saved[key]}")
+            if key not in saved or saved[key] is None:
+                continue
+            # Kein Eintrag in previous (State-File aus einer aelteren Version)
+            # zaehlt wie "geaendert" - so gewinnt die Konfiguration einmalig,
+            # statt dass ein alter Laufzeitwert sie weiter ueberschreibt.
+            if key in current and previous.get(key) != current[key]:
+                skipped.append(f"{key}={current[key]}")
+                continue
+            ctrl[key] = saved[key]
+            taken.append(f"{key}={saved[key]}")
         if taken:
             _LOGGER.info("Steuerzustand wiederhergestellt: %s", ", ".join(taken))
+        if skipped:
+            _LOGGER.info(
+                "Aus der Konfiguration uebernommen (dort geaendert): %s",
+                ", ".join(skipped),
+            )
 
     def _save_control_state(self) -> None:
         if not self.s.restore_state:
             return
         ctrl = self.states[GRP_ENERGY_CONTROL]
-        save_state({"control": {k: ctrl.get(k) for k in self.RESTORED_KEYS}})
+        save_state(
+            {
+                "control": {k: ctrl.get(k) for k in self.RESTORED_KEYS},
+                "control_defaults": self._config_defaults(),
+            }
+        )
 
     def _seed_regulation_from_device(self, data: dict[str, Any]) -> None:
         """Nach dem Start den Sollwert aus der Geraetemeldung uebernehmen.

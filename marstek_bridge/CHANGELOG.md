@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.26 - 2026-09-28
+
+- **Fix:** Eine Aenderung an `passive_cd_time_default`, `passive_power_default`
+  oder `self_regulation_enabled` blieb wirkungslos, weil `restore_state` den
+  alten Laufzeitwert aus `/data/marstek_state.json` darueber geschrieben hat.
+  In der HA-Oberflaeche stand dann weiter der alte Wert. Die Bridge merkt sich
+  jetzt, welche Konfigurationswerte beim Speichern galten, und nimmt bei einer
+  Aenderung den neuen Wert aus der Konfiguration.
+- Beim ersten Start nach dem Update gewinnt die Konfiguration einmalig fuer
+  diese drei Werte, da aeltere State-Files die Vergleichsdaten noch nicht
+  enthalten.
+
 ## 0.0.25 - 2026-09-28
 
 - **Das Totband wirkt jetzt auf die Abweichung des Netzwerts statt auf den
