@@ -703,6 +703,8 @@ class Bridge:
 
         ``refresh=False`` laesst das anschliessende ES.GetMode weg - das nutzt
         die Selbstregelung, damit pro Regelschritt nur ein Kommando laeuft.
+        Mit ``refresh=True`` wird nur nachgelesen, wenn ``poll_interval_mode``
+        groesser 0 ist.
         """
         mode = str(self.states[GRP_ENERGY_CONTROL].get("target_mode") or MODE_AUTO)
         try:
@@ -728,7 +730,12 @@ class Bridge:
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         self._last_passive_push = time.monotonic()
-        if refresh:
+        # Nach einem manuellen Moduswechsel den neuen Zustand nachlesen, damit
+        # die Gruppe *Marstek Energy Mode* stimmt. Steht poll_interval_mode auf
+        # 0, will der Benutzer diese Gruppe gar nicht aktuell halten - dann
+        # entfaellt auch dieser Zusatzaufruf. Wichtig, weil eine Automation, die
+        # zyklisch auf "Apply mode" drueckt, sonst dauernd ES.GetMode ausloest.
+        if refresh and self.s.poll_interval_mode > 0:
             self._sleep_with_commands(self.s.request_delay)
             self._step_es_mode()
         return True

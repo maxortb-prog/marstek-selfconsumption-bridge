@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.22 - 2026-09-28
+
+- Der Button *Apply mode* liest den Modus nur noch nach, wenn
+  `poll_interval_mode` groesser 0 ist. Eine Automation, die zyklisch auf Apply
+  drueckt, hat bisher bei jedem Druck ein `ES.GetMode` ausgeloest - auch dann,
+  wenn die Abfrage per Intervall abgeschaltet war.
+
 ## 0.0.21 - 2026-09-28
 
 **Achtung: `poll_interval` entfaellt.** Nach dem Update einmal die Add-on

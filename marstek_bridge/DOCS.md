@@ -351,6 +351,11 @@ nicht mehrere Anfragen auf einmal heraus.
 Der Button *Refresh data* im Gerät *Marstek Energy Control* fragt weiterhin
 alle Gruppen auf einmal ab, unabhängig von den Intervallen.
 
+Der Button *Apply mode* liest den Modus nach dem Umschalten nach, damit die
+Gruppe *Marstek Energy Mode* den neuen Zustand zeigt - aber nur, wenn
+`poll_interval_mode` größer 0 ist. Sonst löst eine Automation, die zyklisch auf
+Apply drückt, bei jedem Druck ein zusätzliches `ES.GetMode` aus.
+
 ### Mindestpause zwischen Anfragen
 
 `request_delay` gilt seit 0.0.21 für **alle** UDP-Anfragen, nicht mehr nur
