@@ -80,9 +80,13 @@ configuration:
       Netzleistung mit Bezug positiv. Leer = das Topic
       <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
       Zahl oder JSON mit value, state, power.
-      self_regulation_reserve: Ziel-Netzbezug in Watt. Der Regler haelt den
-      Bezug auf diesem Wert, damit er nicht ins Negative kippt und ins Netz
-      eingespeist wird. Uebliche Werte 10-15 W.
+      self_regulation_reserve: obere Kante des Haltebands in Watt und Ziel
+      jeder Korrektur. Uebliche Werte 10-15 W.
+      self_regulation_band_low: untere Kante des Haltebands. Zwischen dieser
+      Kante und der Reserve wird gar nicht geregelt - ein Netzbezug unterhalb
+      der Reserve ist besser als die Reserve selbst. 0 = jede Einspeisung wird
+      sofort korrigiert; ein kleiner negativer Wert toleriert kurze Ausreisser
+      ins Negative, falls die Regelung durch Messrauschen zu nervoes wird.
       self_regulation_deadband: Abweichungen kleiner als dieser Wert in Watt
       loesen kein neues Kommando aus. Gilt nur beim Hochregeln und nur abseits
       der Anschlaege - liegt der berechnete Wert am Deckel oder bei 0 W, wird er
@@ -137,7 +141,10 @@ configuration:
     name: Protokollierung
     description: >-
       log_level: trace protokolliert jedes einzelne UDP- und MQTT-Paket, debug
-      jeden Abfrageschritt, info nur den normalen Ablauf.
+      jeden Abfrageschritt, calc zeigt zusaetzlich zu info die Rechenwege der
+      Bridge (Regelschritte samt Totzeit-Korrektur, Keepalive, Totband,
+      Deckelgrenzen, PV-Energiezaehler) ohne das Protokoll-Rauschen von debug,
+      info nur den normalen Ablauf.
       log_full_line_color: ein = die komplette Zeile wird in der Farbe des
       Levels ausgegeben. Aus = nur Zeitstempel, Level und Logger-Name werden
       als Akzente gefärbt, der Meldungstext bleibt neutral.

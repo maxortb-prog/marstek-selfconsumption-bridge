@@ -52,6 +52,7 @@ from .entities import (
     build_pv_entities,
 )
 from .health import HealthState
+from .logging_setup import CALC_LEVEL
 from .mqtt_bridge import MqttBridge
 from .settings import Settings, load_state, save_state
 from .udp_client import ApiError, MarstekUdpClient, UdpError
@@ -82,6 +83,8 @@ class Bridge:
         self._unseen_delta = 0.0
         self._unseen_since = 0.0
         self._last_target_saturated = False
+        self._last_in_band = False
+        self._last_calc: dict[str, float] = {}
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -490,7 +493,9 @@ class Bridge:
         if not self.s.pv_energy_enabled:
             return
         if not isinstance(power, (int, float)) or isinstance(power, bool):
-            _LOGGER.debug("PV-Energie: kein gueltiger pv_power-Wert (%r)", power)
+            _LOGGER.log(
+                CALC_LEVEL, "PV-Energie: kein gueltiger pv_power-Wert (%r)", power
+            )
             return
 
         now = time.monotonic()
@@ -500,7 +505,8 @@ class Bridge:
         self.states[GRP_ENERGY_STATUS]["calc_pv_energy"] = round(self._pv_energy_wh, 2)
 
         if previous is None:
-            _LOGGER.debug(
+            _LOGGER.log(
+                CALC_LEVEL,
                 "PV-Energie: erste Stuetzstelle (%.0f W), Zaehlerstand %.1f Wh",
                 power,
                 self._pv_energy_wh,
@@ -523,7 +529,8 @@ class Bridge:
         added = (last_power + power) / 2.0 * delta / 3600.0
         self._pv_energy_wh += added
         self.states[GRP_ENERGY_STATUS]["calc_pv_energy"] = round(self._pv_energy_wh, 2)
-        _LOGGER.debug(
+        _LOGGER.log(
+            CALC_LEVEL,
             "PV-Energie: %.0f W -> %.0f W ueber %.1fs = +%.3f Wh (gesamt %.1f Wh)",
             last_power,
             power,
@@ -638,7 +645,7 @@ class Bridge:
         # Vom Benutzer ausgeloest -> INFO, aus Regelung/Keepalive -> DEBUG,
         # damit die INFO-Ebene bei aktiver Selbstregelung lesbar bleibt.
         _LOGGER.log(
-            logging.INFO if refresh else logging.DEBUG,
+            logging.INFO if refresh else CALC_LEVEL,
             "\033[1;36mES.SetMode -> %s\033[0m %s",
             mode,
             config,
@@ -648,7 +655,7 @@ class Bridge:
             return False
         self.states[GRP_ENERGY_CONTROL]["applied_mode"] = mode
         self._note_set_result(
-            M_ES_SET_MODE, result, logging.INFO if refresh else logging.DEBUG
+            M_ES_SET_MODE, result, logging.INFO if refresh else CALC_LEVEL
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         self._last_passive_push = time.monotonic()
@@ -691,7 +698,8 @@ class Bridge:
             cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
             capped = int(max(0, min(cap, int(value))))
             if capped != int(value):
-                _LOGGER.debug(
+                _LOGGER.log(
+                    CALC_LEVEL,
                     "Sollwert %s W auf den aktuellen Deckel %s W begrenzt",
                     int(value),
                     cap,
@@ -815,16 +823,52 @@ class Bridge:
         current = ctrl.get("regulation_output")
         target = self._compute_regulation_output(value)
         _LOGGER.info(
-            "MQTT-Regelwert \033[1m%.1f W\033[0m (Ziel %s W) | Sollwert %s W -> "
-            "\033[1m%s W\033[0m | Deckel %s W",
+            "MQTT-Regelwert \033[1m%.1f W\033[0m (Halteband %s-%s W) | Sollwert "
+            "%s W -> \033[1m%s W\033[0m | Deckel %s W%s",
             value,
+            self.s.self_regulation_band_low,
             self.s.self_regulation_reserve,
             current if current is not None else 0,
             target,
             max(0, int(ctrl.get("passive_power", 0))),
+            " | im Halteband, keine Korrektur" if self._last_in_band else "",
         )
+        self._log_calculation()
         self._pending_regulation = value
         self._flush_regulation()
+
+    def _log_calculation(self) -> None:
+        """Den Rechenweg eines Regelschritts nachvollziehbar machen."""
+        c = self._last_calc
+        if not c or not _LOGGER.isEnabledFor(CALC_LEVEL):
+            return
+        if self._last_in_band:
+            grund = "im Halteband"
+        elif self._last_target_saturated:
+            grund = "am Anschlag begrenzt"
+        elif c["error"] > 0:
+            grund = (
+                f"hoch, gain {self.s.self_regulation_step_gain} / "
+                f"max {self.s.self_regulation_step_up} W"
+            )
+        else:
+            grund = "runter, voller Betrag"
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Rechnung: Netz %.1f W - Totzeit %.1f W = %.1f W | Band %s-%s W | "
+            "Abweichung %+.1f W | Schritt %+.1f W (%s) | %s -> %s W | Deckel %s W",
+            c["value"],
+            c["unseen"],
+            c["measured"],
+            self.s.self_regulation_band_low,
+            self.s.self_regulation_reserve,
+            c["error"],
+            c["step"],
+            grund,
+            c["base"],
+            c["out"],
+            c["cap"],
+        )
 
     def _unseen_effect(self) -> float:
         """Noch nicht sichtbarer Anteil der zuletzt befohlenen Aenderung.
@@ -870,6 +914,11 @@ class Bridge:
         naechsten Schritts ist, kann der Regler nicht ueber den Deckel
         hinauslaufen (kein Windup).
 
+        Zwischen ``self_regulation_band_low`` und ``self_regulation_reserve``
+        liegt ein Halteband, in dem gar nicht geregelt wird: ein Netzbezug
+        unterhalb der Reserve ist besser als die Reserve selbst und kein Grund,
+        Speicherleistung zurueckzunehmen.
+
         Vom Fehler wird ausserdem der Teil der zuletzt befohlenen Aenderung
         abgezogen, der sich in der Messung noch nicht zeigen kann - siehe
         ``_unseen_effect``.
@@ -877,7 +926,23 @@ class Bridge:
         ctrl = self.states[GRP_ENERGY_CONTROL]
         cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
         base = int(ctrl.get("regulation_output") or 0)
-        error = value - self.s.self_regulation_reserve - self._unseen_effect()
+
+        # Um die Totzeit bereinigter Messwert.
+        measured = value - self._unseen_effect()
+        reserve = self.s.self_regulation_reserve
+        low = self.s.self_regulation_band_low
+
+        # Halteband: zwischen band_low und der Reserve ist alles in Ordnung -
+        # ein kleinerer Netzbezug als die Reserve ist besser als die Reserve
+        # selbst, dafuer wird nicht gegengeregelt. Ausserhalb des Bands wird in
+        # beide Richtungen auf die Reserve zurueckgeregelt.
+        if measured > reserve:
+            error = measured - reserve
+        elif measured < low:
+            error = measured - reserve
+        else:
+            error = 0.0
+        self._last_in_band = error == 0.0
 
         if error > 0:
             step = min(error * self.s.self_regulation_step_gain,
@@ -889,6 +954,16 @@ class Bridge:
 
         raw = base + step
         out = int(max(0, min(cap, round(raw))))
+        self._last_calc = {
+            "value": value,
+            "unseen": value - measured,
+            "measured": measured,
+            "error": error,
+            "step": step,
+            "base": base,
+            "cap": cap,
+            "out": out,
+        }
         # Begrenzt? Dann steht der Regler am Anschlag und das Totband darf den
         # letzten Schritt dorthin nicht blockieren.
         self._last_target_saturated = raw > cap or raw < 0
@@ -932,7 +1007,8 @@ class Bridge:
                 and abs(out - int(last)) < self.s.self_regulation_deadband
             ):
                 self._pending_regulation = None
-                _LOGGER.debug(
+                _LOGGER.log(
+                    CALC_LEVEL,
                     "Sollwert %s W liegt innerhalb des Totbands (%s W) - "
                     "kein Kommando",
                     out,
@@ -942,7 +1018,8 @@ class Bridge:
 
         self._pending_regulation = None
         ctrl["regulation_output"] = out
-        _LOGGER.debug(
+        _LOGGER.log(
+            CALC_LEVEL,
             "Selbstregelung %s: %s W -> %s W wird gesendet%s",
             "RUNTER" if going_down else "hoch",
             last if last is not None else 0,
@@ -1132,7 +1209,8 @@ class Bridge:
             return
         interval = max(1.0, cd / 2.0)
         if time.monotonic() - self._last_passive_push >= interval:
-            _LOGGER.debug(
+            _LOGGER.log(
+                CALC_LEVEL,
                 "Passive-Keepalive: %s W erneut gesendet (cd_time=%ss)",
                 self._effective_passive_power(),
                 cd,

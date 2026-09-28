@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.0.18 - 2026-09-28
+
+- Neues Log-Level `calc` zwischen `debug` und `info`. Es zeigt zusaetzlich zu
+  `info` die Rechenwege der Bridge, ohne das Protokoll-Rauschen von `debug`:
+  Regelschritte, Keepalive, Totband- und Deckel-Eingriffe, die automatischen
+  `ES.SetMode`-Kommandos und die PV-Summenbildung.
+- Neue Zeile "Rechnung: ..." pro Regelschritt mit allen Zwischenwerten -
+  gemessener Wert, abgezogene Totzeit, Lage zum Halteband, Schrittgroesse samt
+  Begruendung, alter und neuer Sollwert.
+- Die genannten Meldungen liegen damit nicht mehr auf `debug`.
+
+## 0.0.17 - 2026-09-26
+
+- Halteband statt fester Zielwert: zwischen `self_regulation_band_low` (neu,
+  Standard 0 W) und `self_regulation_reserve` wird nicht mehr gegengeregelt.
+  Bisher hat die Bridge auch bei einem Netzbezug *unterhalb* der Reserve die
+  Leistung zurueckgenommen, obwohl der Zustand besser war als das Ziel.
+- Ausserhalb des Bands wird weiterhin auf die Reserve zurueckgeregelt, nach
+  oben gebremst und nach unten in voller Hoehe.
+- Die INFO-Zeile nennt das Halteband und vermerkt, wenn ein Wert darin liegt.
+
 ## 0.0.16 - 2026-09-26
 
 - Eine Senkung der Obergrenze *Passive power* wirkt jetzt sofort: liegt der

@@ -84,7 +84,8 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
-| `self_regulation_reserve` | `12` | Ziel-Netzbezug in Watt, auf den geregelt wird. |
+| `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
+| `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
 | `self_regulation_deadband` | `10` | Abweichungen darunter lösen kein Kommando aus (nur beim Hochregeln und nur abseits der Anschläge). |
 | `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
 | `self_regulation_min_interval_down` | `5.0` | Minimaler Abstand beim Runterregeln. |
@@ -103,7 +104,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen, bis `/health` 503 liefert (verhindert Neustart-Schleifen bei kurzen Aussetzern). |
 | `persist_device_info` | `true` | `device_ble_mac`/`device_type` in die Add-on-Optionen zurückschreiben. |
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
-| `log_level` | `info` | `trace` \| `debug` \| `info` \| `warning` \| `error`. `trace` loggt jedes UDP- und MQTT-Paket. |
+| `log_level` | `info` | `trace` \| `debug` \| `calc` \| `info` \| `warning` \| `error`. Siehe unten. |
 | `log_full_line_color` | `true` | Ein: die komplette Zeile erscheint in der Levelfarbe (grau/cyan/grün/gelb/rot). Aus: nur Zeitstempel, Level und Logger-Name sind farbige Akzente. |
 
 ## Selbstregelung im Passive-Modus
@@ -113,16 +114,27 @@ positiv, Einspeisung negativ) und regelt sie auf `self_regulation_reserve`
 ein - typisch 10-15 W, damit der Bezug nie ins Negative kippt.
 
 ```
-Abweichung = Netzwert − Reserve − Δ_unsichtbar
+Messwert = Netzwert − Δ_unsichtbar
 
-Abweichung > 0  (zu viel Bezug)   → Schritt = min(Abweichung × step_gain, step_up)
-Abweichung < 0  (zu wenig Bezug)  → Schritt = Abweichung   (voll, ungebremst)
+Messwert > Reserve      → Abweichung = Messwert − Reserve   hoch, gebremst
+band_low ≤ M ≤ Reserve  → Abweichung = 0                    Halteband, nichts
+Messwert < band_low     → Abweichung = Messwert − Reserve   runter, voll
 
+Schritt hoch   = min(Abweichung × step_gain, step_up)
+Schritt runter = Abweichung
 Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
 ```
 
 Die Regelung ist bewusst **asymmetrisch**: Hochregeln kann überschießen und
 damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
+
+* **Halteband** zwischen `band_low` (Standard 0 W) und `reserve`. Liegt der
+  Netzbezug darin, passiert nichts. Ein Bezug von 4 W ist besser als die
+  Reserve von 10 W - dafür Speicherleistung zurückzunehmen wäre verschenkt.
+  Korrigiert wird erst, wenn der Wert das Band verlässt, und dann immer zurück
+  auf die Reserve: bei −20 W also um 30 W. Bis exakt 0 W zurückzuregeln würde
+  den Arbeitspunkt an die Kante legen, wo ihn das nächste Messrauschen wieder
+  ins Negative kippt.
 
 * **Nach oben gebremst.** Pro Schritt wird nur `step_gain` (Standard 0,5) der
   Abweichung ausgeglichen, höchstens aber `step_up` Watt. Der Regler nähert
@@ -222,6 +234,30 @@ Reaktion auf Lastabfälle, also genau das, was schnell gehen soll.
 Neue Entities im Gerät *Marstek Energy Control*: Switch **Self-regulation**,
 Sensor **Regulation input** (zuletzt empfangen) und Sensor **Regulation output**
 (zuletzt gesendet).
+
+### Log-Level
+
+| Level | Zeigt |
+|---|---|
+| `error` / `warning` | nur Probleme |
+| `info` | Ablauf: Init, Modus-Wechsel, jede empfangene MQTT-Regelnachricht |
+| `calc` | zusätzlich alle **Rechenwege**: Regelschritte mit Totzeit-Korrektur, Keepalive, Totband- und Deckel-Eingriffe, automatische `ES.SetMode`-Kommandos, PV-Energiezähler |
+| `debug` | zusätzlich jede UDP-Abfrage und jedes MQTT-Kommando |
+| `trace` | zusätzlich jedes einzelne UDP- und MQTT-Paket im Klartext |
+
+`calc` ist die Stufe zum Nachvollziehen der Regelung, ohne sich das
+Protokoll-Rauschen einzuhandeln. Eine Zeile pro Regelschritt sieht so aus:
+
+```
+CALC  Rechnung: Netz 21.0 W - Totzeit 8.0 W = 13.0 W | Band 0-10 W |
+      Abweichung +3.0 W | Schritt +1.5 W (hoch, gain 0.5 / max 50 W) |
+      17 -> 19 W | Deckel 180 W
+CALC  Selbstregelung hoch: 17 W -> 19 W wird gesendet
+CALC  Passive-Keepalive: 19 W erneut gesendet (cd_time=30s)
+```
+
+Damit ist jeder Schritt nachrechenbar: gemessener Wert, abgezogene Totzeit,
+Lage zum Halteband, Größe und Begründung des Schritts, alter und neuer Sollwert.
 
 ### Was im Log steht
 

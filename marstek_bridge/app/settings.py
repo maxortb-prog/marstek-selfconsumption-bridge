@@ -64,6 +64,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_enabled": False,
         "self_regulation_topic": "",
         "self_regulation_reserve": 12,
+        "self_regulation_band_low": 0,
         "self_regulation_deadband": 10,
         "self_regulation_min_interval": 5.0,
         "self_regulation_min_interval_down": 5.0,
@@ -145,6 +146,7 @@ class Settings:
     self_regulation_enabled: bool = False
     self_regulation_topic: str = ""
     self_regulation_reserve: int = 12
+    self_regulation_band_low: int = 0
     self_regulation_deadband: int = 10
     self_regulation_min_interval: float = 5.0
     self_regulation_min_interval_down: float = 5.0

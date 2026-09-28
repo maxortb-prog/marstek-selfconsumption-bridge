@@ -13,17 +13,29 @@ import sys
 TRACE_LEVEL = 5
 logging.addLevelName(TRACE_LEVEL, "TRACE")
 
+# Zwischen DEBUG und INFO: die Rechenwege der Bridge (Regelung, Totzeit,
+# Keepalive, Energiezaehler) ohne das Protokoll-Rauschen von DEBUG.
+CALC_LEVEL = 15
+logging.addLevelName(CALC_LEVEL, "CALC")
+
 
 def _trace(self: logging.Logger, message: str, *args, **kwargs) -> None:
     if self.isEnabledFor(TRACE_LEVEL):
         self._log(TRACE_LEVEL, message, args, **kwargs)
 
 
+def _calc(self: logging.Logger, message: str, *args, **kwargs) -> None:
+    if self.isEnabledFor(CALC_LEVEL):
+        self._log(CALC_LEVEL, message, args, **kwargs)
+
+
 logging.Logger.trace = _trace  # type: ignore[attr-defined]
+logging.Logger.calc = _calc  # type: ignore[attr-defined]
 
 LEVELS: dict[str, int] = {
     "trace": TRACE_LEVEL,
     "debug": logging.DEBUG,
+    "calc": CALC_LEVEL,
     "info": logging.INFO,
     "warning": logging.WARNING,
     "error": logging.ERROR,
@@ -37,6 +49,7 @@ DIM = "\033[2m"
 LEVEL_COLORS: dict[int, str] = {
     TRACE_LEVEL: "\033[38;5;245m",   # grau
     logging.DEBUG: "\033[36m",       # cyan
+    CALC_LEVEL: "\033[35m",          # magenta
     logging.INFO: "\033[32m",        # gruen
     logging.WARNING: "\033[33m",     # gelb
     logging.ERROR: "\033[31m",       # rot
