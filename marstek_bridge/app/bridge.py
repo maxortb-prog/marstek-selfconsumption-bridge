@@ -80,7 +80,6 @@ class Bridge:
         self._poll_last: dict[str, float] = {}
         self._last_write = 0.0
         self._last_passive_push = 0.0
-        self._last_regulation_send = 0.0
         self._last_regulation_input: float | None = None
         self._last_target_saturated = False
         self._last_in_band = False
@@ -750,7 +749,12 @@ class Bridge:
             if ctrl.get("regulation_input") is not None:
                 self._pending_regulation = float(ctrl["regulation_input"])
             return
-        self._apply_mode()
+        if self._apply_mode() and target == MODE_PASSIVE and self._regulation_active():
+            # Auch ein Moduswechsel nach Passive ist eine Sollwertaenderung: das
+            # Geraet schwingt danach ein. Ohne diesen Marker wuerde die Regelung
+            # sofort auf einen Messwert korrigieren, der noch vom Umschalten
+            # stammt - etwa beim Start, wenn das Geraet aus dem Auto-Modus kommt.
+            self._mark_command_sent()
 
     def _apply_mode(self, refresh: bool = True) -> bool:
         """Den vorgemerkten Modus an das Geraet senden.
@@ -1066,15 +1070,51 @@ class Bridge:
         """
         value = float(self._pending_regulation)
         self._pending_regulation = None
-        waiting = self._wait_since is not None
 
-        # Messwert gehoert zur laufenden Beobachtung, unabhaengig davon, ob er
-        # spaeter eine Korrektur ausloest.
-        if waiting:
-            self._settle_samples.append(value)
-            del self._settle_samples[: -self.s.self_regulation_settle_samples]
+        # 1) Einpendeln zuerst auswerten. Ein Wert im Totband ist der beste
+        #    Beweis, dass der Einschwingvorgang vorbei ist - wuerde erst das
+        #    Totband geprueft, bliebe die Wartephase ewig offen und ein
+        #    spaeterer Lastwechsel liefe faelschlich in den Timeout-Pfad.
+        gain = self.s.self_regulation_settle_gain
+        grund = "Signal in Ruhe"
+        if self._wait_since is not None:
+            samples = self._settle_samples
+            samples.append(value)
+            needed = self.s.self_regulation_settle_samples
+            del samples[:-needed]
+            span = max(samples) - min(samples) if samples else 0.0
+            waited = time.monotonic() - self._wait_since
+            tolerance = self.s.self_regulation_settle_tolerance
+            max_wait = self.s.self_regulation_settle_max_wait
 
-        self._compute_regulation_output(value, gain=self.s.self_regulation_settle_gain)
+            if len(samples) >= needed and span <= tolerance:
+                self._wait_since = None
+                grund = f"eingependelt, Spanne {span:.0f} W nach {waited:.0f}s"
+            elif max_wait > 0 and waited >= max_wait:
+                self._wait_since = None
+                gain = self.s.self_regulation_timeout_gain
+                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
+
+            if self._wait_since is not None:
+                # Noch am Einschwingen - nichts tun, nur protokollieren.
+                self._compute_regulation_output(
+                    value, gain=self.s.self_regulation_settle_gain
+                )
+                _LOGGER.log(
+                    CALC_LEVEL,
+                    "Warte auf Einpendeln: %s/%s Werte, Spanne %.0f W "
+                    "(Toleranz %s W), seit %.0fs, Abweichung %+.1f W",
+                    len(samples),
+                    needed,
+                    span,
+                    tolerance,
+                    waited,
+                    float(self._last_calc.get("error", 0.0)),
+                )
+                return
+
+        # 2) Erst jetzt pruefen, ob ueberhaupt etwas zu korrigieren ist.
+        self._compute_regulation_output(value, gain=gain)
         error = float(self._last_calc.get("error", 0.0))
         if abs(error) < self.s.self_regulation_deadband:
             _LOGGER.log(
@@ -1086,44 +1126,11 @@ class Bridge:
             )
             return
 
-        if waiting:
-            samples = self._settle_samples
-            needed = self.s.self_regulation_settle_samples
-            span = max(samples) - min(samples) if samples else 0.0
-            waited = time.monotonic() - self._wait_since
-            tolerance = self.s.self_regulation_settle_tolerance
-            max_wait = self.s.self_regulation_settle_max_wait
-
-            if len(samples) >= needed and span <= tolerance:
-                gain = self.s.self_regulation_settle_gain
-                grund = f"eingependelt, Spanne {span:.0f} W nach {waited:.0f}s"
-            elif max_wait > 0 and waited >= max_wait:
-                gain = self.s.self_regulation_timeout_gain
-                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
-            else:
-                _LOGGER.log(
-                    CALC_LEVEL,
-                    "Warte auf Einpendeln: %s/%s Werte, Spanne %.0f W "
-                    "(Toleranz %s W), seit %.0fs, Abweichung %+.1f W",
-                    len(samples),
-                    needed,
-                    span,
-                    tolerance,
-                    waited,
-                    error,
-                )
-                return
-        else:
-            gain = self.s.self_regulation_settle_gain
-            grund = "erste Korrektur"
-
         self._send_regulation(value, gain, grund)
 
     def _mark_command_sent(self) -> None:
         """Nach jedem gesendeten Sollwert beginnt ein neuer Einschwingvorgang."""
-        now = time.monotonic()
-        self._last_regulation_send = now
-        self._wait_since = now
+        self._wait_since = time.monotonic()
         self._settle_samples.clear()
 
     def _send_regulation(self, value: float, gain: float, grund: str) -> None:

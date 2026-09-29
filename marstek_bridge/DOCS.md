@@ -138,9 +138,15 @@ Statt diese Totzeit zu schätzen, wartet die Bridge sie ab:
 2. Eingehende Messwerte sammeln, nichts tun.
 3. Liegen `settle_samples` Werte in Folge innerhalb von `settle_tolerance`
    beieinander, ist der Einschwingvorgang vorbei - die Messung zeigt jetzt die
-   Wirkung der Korrektur. Nächste Korrektur.
+   Wirkung der Korrektur. Ab dann gilt das Signal als ruhig: Die nächste
+   Abweichung wird sofort korrigiert, ohne erneut zu warten. Gewartet wird nur
+   nach einer Sollwertänderung.
 4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
    trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
+
+Eine Sollwertänderung startet die Wartephase - auch der Wechsel nach *Passive*
+über den Apply-Button, denn danach schwingt das Gerät ebenso ein. Der Keepalive
+tut das nicht, er sendet nur denselben Wert erneut.
 
 **Das gilt für beide Richtungen.** Auch eine Einspeisung wird erst nach dem
 Einpendeln korrigiert. Während des Einschwingens rutscht der Netzwert praktisch

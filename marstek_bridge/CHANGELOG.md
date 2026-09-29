@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.0.30 - 2026-09-29
+
+- **Fix:** Lagen alle Messwerte im Totband, wurde die Wartephase nie beendet -
+  die Pruefung auf das Einpendeln kam erst nach der Totbandpruefung und wurde
+  deshalb uebersprungen. Ein spaeterer Lastwechsel lief dadurch in den
+  Timeout-Pfad und wurde nur mit `timeout_gain` korrigiert, obwohl das Signal
+  laengst ruhig war. Das Einpendeln wird jetzt zuerst ausgewertet.
+- **Fix:** Der Wechsel nach *Passive* ueber den Apply-Button startet jetzt
+  ebenfalls eine Wartephase. Bisher korrigierte die Bridge direkt nach dem
+  Umschalten auf einen Messwert, der noch vom Umschaltvorgang stammte - beim
+  Start besonders auffaellig, weil das Geraet aus dem Auto-Modus kommt und
+  dort selbst regelt.
+- Der Keepalive startet weiterhin keine Wartephase, da er denselben Wert
+  erneut sendet.
+
 ## 0.0.29 - 2026-09-29
 
 - Die Regelung ist jetzt in beide Richtungen gleich: auch eine Einspeisung wird
