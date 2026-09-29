@@ -60,6 +60,9 @@ from .udp_client import ApiError, MarstekUdpClient, UdpError
 
 _LOGGER = logging.getLogger("marstek.bridge")
 
+# Wiederkehrende Meldungen ohne Konsequenz hoechstens alle X Sekunden.
+QUIET_LOG_INTERVAL = 10.0
+
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -86,8 +89,13 @@ class Bridge:
         self._last_calc: dict[str, float] = {}
         # Einpendel-Strategie: Messwerte seit dem letzten Kommando und der
         # Zeitpunkt, ab dem gewartet wird.
+        # Fenster der letzten Messwerte - laeuft durchgehend mit, nicht nur
+        # nach einer Korrektur.
         self._settle_samples: list[float] = []
-        self._wait_since: float | None = None
+        # Seit wann liegt eine Abweichung an, ohne dass das Signal ruhig ist?
+        self._unsettled_since: float | None = None
+        self._last_quiet_log = 0.0
+        self._last_input_log = 0.0
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -958,6 +966,17 @@ class Bridge:
         target = self._compute_regulation_output(
             value, gain=self.s.self_regulation_settle_gain
         )
+        # Bei kurzer Taktung wuerde jede Sekunde eine INFO-Zeile anfallen.
+        # Zeilen ohne moegliche Konsequenz deshalb ausduennen - auf CALC ist
+        # weiterhin jeder Schritt nachvollziehbar.
+        now = time.monotonic()
+        if current is not None and target == int(current):
+            if now - self._last_input_log < QUIET_LOG_INTERVAL:
+                self._log_calculation()
+                self._pending_regulation = value
+                self._flush_regulation()
+                return
+        self._last_input_log = now
         _LOGGER.info(
             "MQTT-Regelwert \033[1m%.1f W\033[0m (Halteband %s-%s W) | Sollwert "
             "%s W -> \033[1m%s W\033[0m | Deckel %s W%s",
@@ -1051,74 +1070,42 @@ class Bridge:
         self._flush_settle()
 
     def _flush_settle(self) -> None:
-        """Erst korrigieren, wenn die Messung wieder ruhig ist.
+        """Nur auf ein ruhiges Signal korrigieren.
 
         Das Geraet braucht nach einem Kommando rund 10 Sekunden Totzeit und
-        weitere 10 bis 15 Sekunden Rampe. Wer in dieser Zeit nachfasst, regelt
-        denselben Fehler mehrfach aus. Statt die Totzeit zu schaetzen, wird hier
-        gewartet, bis mehrere aufeinanderfolgende Messwerte dicht beieinander
-        liegen - dann ist der Einschwingvorgang vorbei und die Messung zeigt die
-        Wirkung der letzten Korrektur.
+        weitere 10 bis 15 Sekunden Rampe. Genauso wenig aussagekraeftig ist der
+        erste Messwert nach einem Lastwechsel - er liegt meist mitten in der
+        Aenderung. In beiden Faellen waere eine Korrektur eine Korrektur auf
+        einen Zwischenstand, die sofort nachgebessert werden muss.
+
+        Deshalb laeuft ein Fenster der letzten ``settle_samples`` Messwerte
+        durchgehend mit. Korrigiert wird erst, wenn diese Werte innerhalb von
+        ``settle_tolerance`` beieinander liegen - dann steht das System, und
+        eine einzige Korrektur trifft meist. Nach jedem Kommando wird das
+        Fenster geleert.
 
         Das gilt fuer beide Richtungen. Auch eine Einspeisung wird erst nach dem
         Einpendeln korrigiert: Waehrend des Einschwingens rutscht der Netzwert
         praktisch immer kurz ins Negative, und sofort dagegenzuregeln hiesse,
-        auf ein bereits vorbeigezogenes Ereignis zu reagieren - das erzeugt
-        genau das Schwingen, das vermieden werden soll. Ist der Wert nach dem
-        Einpendeln immer noch negativ, wird er wie jede andere Abweichung
-        korrigiert.
+        auf ein bereits vorbeigezogenes Ereignis zu reagieren.
         """
         value = float(self._pending_regulation)
         self._pending_regulation = None
 
-        # 1) Einpendeln zuerst auswerten. Ein Wert im Totband ist der beste
-        #    Beweis, dass der Einschwingvorgang vorbei ist - wuerde erst das
-        #    Totband geprueft, bliebe die Wartephase ewig offen und ein
-        #    spaeterer Lastwechsel liefe faelschlich in den Timeout-Pfad.
-        gain = self.s.self_regulation_settle_gain
-        grund = "Signal in Ruhe"
-        if self._wait_since is not None:
-            samples = self._settle_samples
-            samples.append(value)
-            needed = self.s.self_regulation_settle_samples
-            del samples[:-needed]
-            span = max(samples) - min(samples) if samples else 0.0
-            waited = time.monotonic() - self._wait_since
-            tolerance = self.s.self_regulation_settle_tolerance
-            max_wait = self.s.self_regulation_settle_max_wait
+        samples = self._settle_samples
+        samples.append(value)
+        needed = self.s.self_regulation_settle_samples
+        del samples[:-needed]
+        span = max(samples) - min(samples)
+        settled = len(samples) >= needed and span <= self.s.self_regulation_settle_tolerance
 
-            if len(samples) >= needed and span <= tolerance:
-                self._wait_since = None
-                grund = f"eingependelt, Spanne {span:.0f} W nach {waited:.0f}s"
-            elif max_wait > 0 and waited >= max_wait:
-                self._wait_since = None
-                gain = self.s.self_regulation_timeout_gain
-                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
-
-            if self._wait_since is not None:
-                # Noch am Einschwingen - nichts tun, nur protokollieren.
-                self._compute_regulation_output(
-                    value, gain=self.s.self_regulation_settle_gain
-                )
-                _LOGGER.log(
-                    CALC_LEVEL,
-                    "Warte auf Einpendeln: %s/%s Werte, Spanne %.0f W "
-                    "(Toleranz %s W), seit %.0fs, Abweichung %+.1f W",
-                    len(samples),
-                    needed,
-                    span,
-                    tolerance,
-                    waited,
-                    float(self._last_calc.get("error", 0.0)),
-                )
-                return
-
-        # 2) Erst jetzt pruefen, ob ueberhaupt etwas zu korrigieren ist.
-        self._compute_regulation_output(value, gain=gain)
+        self._compute_regulation_output(value, gain=self.s.self_regulation_settle_gain)
         error = float(self._last_calc.get("error", 0.0))
+
         if abs(error) < self.s.self_regulation_deadband:
-            _LOGGER.log(
-                CALC_LEVEL,
+            if settled:
+                self._unsettled_since = None
+            self._log_quiet(
                 "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
                 "kein Kommando",
                 error,
@@ -1126,12 +1113,49 @@ class Bridge:
             )
             return
 
+        if settled:
+            gain = self.s.self_regulation_settle_gain
+            grund = f"eingependelt, Spanne {span:.0f} W"
+            self._unsettled_since = None
+        else:
+            if self._unsettled_since is None:
+                self._unsettled_since = time.monotonic()
+            waited = time.monotonic() - self._unsettled_since
+            max_wait = self.s.self_regulation_settle_max_wait
+            if max_wait > 0 and waited >= max_wait:
+                gain = self.s.self_regulation_timeout_gain
+                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
+            else:
+                self._log_quiet(
+                    "Warte auf Einpendeln: %s/%s Werte, Spanne %.1f W "
+                    "(Toleranz %s W), seit %.0fs, Abweichung %+.1f W",
+                    len(samples),
+                    needed,
+                    span,
+                    self.s.self_regulation_settle_tolerance,
+                    waited,
+                    error,
+                )
+                return
+
         self._send_regulation(value, gain, grund)
+
+    def _log_quiet(self, message: str, *args: Any) -> None:
+        """Wiederkehrende "nichts passiert"-Meldungen ausduennen.
+
+        Bei einer Taktung von einer Sekunde waeren das sonst 60 Zeilen pro
+        Minute. Auf CALC bleibt alles sichtbar, nur seltener.
+        """
+        now = time.monotonic()
+        if now - self._last_quiet_log < QUIET_LOG_INTERVAL:
+            return
+        self._last_quiet_log = now
+        _LOGGER.log(CALC_LEVEL, message, *args)
 
     def _mark_command_sent(self) -> None:
         """Nach jedem gesendeten Sollwert beginnt ein neuer Einschwingvorgang."""
-        self._wait_since = time.monotonic()
         self._settle_samples.clear()
+        self._unsettled_since = None
 
     def _send_regulation(self, value: float, gain: float, grund: str) -> None:
         """Einen Korrekturschritt berechnen und senden."""

@@ -92,7 +92,10 @@ configuration:
       <mqtt_base_topic>/energy_control/regulation_input. Accepts a plain number
       or JSON with value, state, power.
       self_regulation_settle_samples: this many consecutive samples must lie
-      close together to count as settled.
+      close together to count as settled. The window runs continuously -
+      corrections only happen on a calm signal, no matter whether the unrest
+      comes from the bridge's own correction or from a load change. Proven
+      setup: one sample per second with 10 to 15 samples.
       self_regulation_settle_tolerance: allowed spread of those samples in
       watts. Choose a larger value with a noisy load, otherwise the controller
       waits needlessly.

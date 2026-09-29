@@ -96,7 +96,10 @@ configuration:
       <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
       Zahl oder JSON mit value, state, power.
       self_regulation_settle_samples: so viele aufeinanderfolgende Messwerte
-      muessen dicht beieinander liegen, damit als eingependelt gilt.
+      muessen dicht beieinander liegen, damit als eingependelt gilt. Das Fenster
+      laeuft durchgehend mit - korrigiert wird nur auf ein ruhiges Signal, egal
+      ob die Unruhe von der eigenen Korrektur oder von einem Lastwechsel
+      stammt. Bewaehrt: ein Messwert pro Sekunde mit 10 bis 15 Stichproben.
       self_regulation_settle_tolerance: erlaubte Spanne dieser Messwerte in
       Watt. Bei unruhiger Last groesser waehlen, sonst wartet der Regler
       unnoetig lange.

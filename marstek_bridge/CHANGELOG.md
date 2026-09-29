@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.31 - 2026-09-29
+
+- **Die Bridge korrigiert jetzt grundsaetzlich nur auf ein ruhiges Signal.**
+  Bisher griff die Einpendel-Pruefung nur nach einer eigenen Korrektur - stand
+  das System in Ruhe, loeste der erste abweichende Messwert sofort eine
+  Korrektur aus. Bei einem Lastwechsel ist das ein Wert mitten in der
+  Aenderung, die Korrektur trifft einen Zwischenstand und muss nachgebessert
+  werden. Das Fenster der letzten `settle_samples` Werte laeuft deshalb
+  durchgehend mit, egal woher die Unruhe kommt.
+- Wiederkehrende Meldungen ohne Konsequenz erscheinen hoechstens alle 10
+  Sekunden. Bei einer Taktung von einer Sekunde waeren das sonst 60 Zeilen pro
+  Minute.
+
 ## 0.0.30 - 2026-09-29
 
 - **Fix:** Lagen alle Messwerte im Totband, wurde die Wartephase nie beendet -

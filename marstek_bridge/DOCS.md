@@ -132,21 +132,33 @@ weitere 10 bis 15 Sekunden Rampe, bis die neue Leistung anliegt. Ein Regler,
 der alle 5 Sekunden nachfasst, korrigiert denselben Fehler vier- bis fünfmal,
 bevor die erste Korrektur überhaupt messbar ist - und schwingt.
 
-Statt diese Totzeit zu schätzen, wartet die Bridge sie ab:
+Genauso wenig aussagekräftig ist der erste Messwert nach einem **Lastwechsel** -
+er liegt meist mitten in der Änderung. Eine Korrektur darauf trifft einen
+Zwischenstand und muss sofort nachgebessert werden; auch daraus entsteht
+Schwingen.
 
-1. Korrektur senden (Anteil `settle_gain` der Abweichung, Standard 80 %).
-2. Eingehende Messwerte sammeln, nichts tun.
-3. Liegen `settle_samples` Werte in Folge innerhalb von `settle_tolerance`
-   beieinander, ist der Einschwingvorgang vorbei - die Messung zeigt jetzt die
-   Wirkung der Korrektur. Ab dann gilt das Signal als ruhig: Die nächste
-   Abweichung wird sofort korrigiert, ohne erneut zu warten. Gewartet wird nur
-   nach einer Sollwertänderung.
+Die Bridge korrigiert deshalb grundsätzlich nur auf ein **ruhiges Signal**:
+
+1. Ein Fenster der letzten `settle_samples` Messwerte läuft durchgehend mit.
+2. Liegen diese Werte innerhalb von `settle_tolerance` beieinander, steht das
+   System - erst dann wird korrigiert, um den Anteil `settle_gain` der
+   Abweichung (Standard 80 %).
+3. Nach jedem Kommando wird das Fenster geleert, es beginnt von vorn.
 4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
    trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
 
-Eine Sollwertänderung startet die Wartephase - auch der Wechsel nach *Passive*
-über den Apply-Button, denn danach schwingt das Gerät ebenso ein. Der Keepalive
-tut das nicht, er sendet nur denselben Wert erneut.
+Ob die Unruhe von der eigenen Korrektur oder von einem Lastwechsel stammt,
+spielt dabei keine Rolle - behandelt wird beides gleich.
+
+**Taktung der Quelle:** Je feiner der Eingang, desto genauer die Erkennung.
+Bewährt hat sich ein Messwert pro Sekunde mit `settle_samples` zwischen 10 und
+15 und einer Toleranz von 3 W - dann gilt das System nach 10 bis 15 Sekunden
+Ruhe als eingeschwungen. Mit einem 5-Sekunden-Mittel und 3 Stichproben wird die
+Erkennung träge und ungenau, weil der Mittelwert die Ruhe selbst verschleift.
+
+Jede Sollwertänderung leert das Fenster - auch der Wechsel nach *Passive* über
+den Apply-Button, denn danach schwingt das Gerät ebenso ein. Der Keepalive tut
+das nicht, er sendet nur denselben Wert erneut.
 
 **Das gilt für beide Richtungen.** Auch eine Einspeisung wird erst nach dem
 Einpendeln korrigiert. Während des Einschwingens rutscht der Netzwert praktisch
@@ -281,8 +293,13 @@ CALC  Selbstregelung hoch: 17 W -> 19 W wird gesendet
 CALC  Passive-Keepalive: 19 W erneut gesendet (cd_time=30s)
 ```
 
-Damit ist jeder Schritt nachrechenbar: gemessener Wert, abgezogene Totzeit,
-Lage zum Halteband, Größe und Begründung des Schritts, alter und neuer Sollwert.
+Damit ist jeder Schritt nachrechenbar: gemessener Wert, Lage zum Halteband,
+Größe und Begründung des Schritts, alter und neuer Sollwert.
+
+Wiederkehrende Meldungen ohne Konsequenz - „im Totband", „warte auf
+Einpendeln" - erscheinen höchstens alle 10 Sekunden, ebenso die INFO-Zeile für
+einen Messwert, der am Sollwert nichts ändert. Sonst liefe bei einem
+Sekundentakt jede Sekunde eine Zeile durch.
 
 ### Was im Log steht
 
