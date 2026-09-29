@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.27 - 2026-09-29
+
+- **Neue Regelstrategie `settle` als Standard.** Statt die Totzeit des Geraets
+  zu schaetzen, wartet die Bridge nach jeder Korrektur, bis sich die Messung
+  wieder beruhigt hat (`settle_samples` Werte innerhalb `settle_tolerance`),
+  und korrigiert dann in einem grossen Schritt (`settle_gain`, Standard 80 %).
+  Hintergrund: Messungen am Geraet ergaben rund 10 Sekunden Totzeit und
+  weitere 10 bis 15 Sekunden Rampe - jeder Regler mit festem Takt korrigiert in
+  dieser Zeit mehrfach denselben Fehler und schwingt.
+- Beruhigt sich das Signal nicht innerhalb von `settle_max_wait`, wird mit dem
+  kleineren `timeout_gain` korrigiert.
+- Einspeisung bricht das Warten ab und wird sofort und vollstaendig korrigiert.
+- Das bisherige Verfahren bleibt als `self_regulation_strategy: step`
+  erhalten. Nur dort wirken `step_gain`, `step_up`, `min_interval` und
+  `settle_time`.
+
 ## 0.0.26 - 2026-09-28
 
 - **Fix:** Eine Aenderung an `passive_cd_time_default`, `passive_power_default`

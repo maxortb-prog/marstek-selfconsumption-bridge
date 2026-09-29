@@ -95,6 +95,26 @@ configuration:
       Netzleistung mit Bezug positiv. Leer = das Topic
       <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
       Zahl oder JSON mit value, state, power.
+      self_regulation_strategy: settle wartet nach jeder Korrektur, bis sich
+      die Messung wieder beruhigt hat, und korrigiert dann in einem grossen
+      Schritt. Das Geraet braucht rund 10 Sekunden Totzeit und weitere 10 bis
+      15 Sekunden Rampe - wer frueher nachfasst, regelt denselben Fehler
+      mehrfach aus und schwingt. step ist das alte Verfahren mit festen
+      Schritten im Takt (step_gain, step_up, min_interval, settle_time).
+      self_regulation_settle_samples: so viele aufeinanderfolgende Messwerte
+      muessen dicht beieinander liegen, damit als eingependelt gilt.
+      self_regulation_settle_tolerance: erlaubte Spanne dieser Messwerte in
+      Watt. Bei unruhiger Last groesser waehlen, sonst wartet der Regler
+      unnoetig lange.
+      self_regulation_settle_max_wait: pendelt sich das Signal so lange nicht
+      ein, wird trotzdem korrigiert, dann aber mit timeout_gain. 0 = unbegrenzt
+      warten, dann wird nur noch Einspeisung korrigiert.
+      self_regulation_settle_gain: Anteil der Abweichung, der nach dem
+      Einpendeln ausgeglichen wird. 0.8 laesst etwas Sicherheitsmarge gegen
+      Ueberschwingen.
+      self_regulation_timeout_gain: Anteil, der nach Ablauf von
+      settle_max_wait ausgeglichen wird - kleiner, weil die Messung dann nicht
+      verlaesslich ist.
       self_regulation_reserve: obere Kante des Haltebands in Watt und Ziel
       jeder Korrektur. Uebliche Werte 10-15 W.
       self_regulation_band_low: untere Kante des Haltebands. Zwischen dieser

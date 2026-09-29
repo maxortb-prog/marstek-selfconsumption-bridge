@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.26"
+version: "0.0.27"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -69,6 +69,12 @@ options:
     passive_keepalive: false
     self_regulation_enabled: false
     self_regulation_topic: ""
+    self_regulation_strategy: "settle"
+    self_regulation_settle_samples: 3
+    self_regulation_settle_tolerance: 10
+    self_regulation_settle_max_wait: 60
+    self_regulation_settle_gain: 0.8
+    self_regulation_timeout_gain: 0.5
     self_regulation_reserve: 12
     self_regulation_band_low: 0
     self_regulation_deadband: 10
@@ -131,6 +137,12 @@ schema:
     passive_keepalive: bool
     self_regulation_enabled: bool
     self_regulation_topic: str?
+    self_regulation_strategy: list(settle|step)
+    self_regulation_settle_samples: int(2,20)
+    self_regulation_settle_tolerance: int(1,500)
+    self_regulation_settle_max_wait: int(0,600)
+    self_regulation_settle_gain: float(0.1,1.0)
+    self_regulation_timeout_gain: float(0.0,1.0)
     self_regulation_reserve: int(0,500)
     self_regulation_band_low: int(-500,500)
     self_regulation_deadband: int(0,500)

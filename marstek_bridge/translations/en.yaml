@@ -91,6 +91,25 @@ configuration:
       grid power with import positive. Empty = the topic
       <mqtt_base_topic>/energy_control/regulation_input. Accepts a plain number
       or JSON with value, state, power.
+      self_regulation_strategy: settle waits after each correction until the
+      measurement has calmed down and then corrects in one large step. The
+      battery needs about 10 seconds of dead time plus another 10 to 15 seconds
+      of ramp - correcting earlier means correcting the same error several
+      times, which causes oscillation. step is the previous method with fixed
+      steps on a timer (step_gain, step_up, min_interval, settle_time).
+      self_regulation_settle_samples: this many consecutive samples must lie
+      close together to count as settled.
+      self_regulation_settle_tolerance: allowed spread of those samples in
+      watts. Choose a larger value with a noisy load, otherwise the controller
+      waits needlessly.
+      self_regulation_settle_max_wait: if the signal does not settle within
+      this time, a correction is made anyway, but with timeout_gain. 0 = wait
+      indefinitely, then only export is corrected.
+      self_regulation_settle_gain: fraction of the deviation compensated once
+      settled. 0.8 leaves some margin against overshoot.
+      self_regulation_timeout_gain: fraction compensated after
+      settle_max_wait expires - smaller, because the measurement is not
+      reliable then.
       self_regulation_reserve: upper edge of the hold band in watts and the
       target of every correction. Typical values are 10-15 W.
       self_regulation_band_low: lower edge of the hold band. Between this edge

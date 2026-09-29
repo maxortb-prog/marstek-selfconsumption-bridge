@@ -89,6 +89,10 @@ class Bridge:
         self._last_target_saturated = False
         self._last_in_band = False
         self._last_calc: dict[str, float] = {}
+        # Einpendel-Strategie: Messwerte seit dem letzten Kommando und der
+        # Zeitpunkt, ab dem gewartet wird.
+        self._settle_samples: list[float] = []
+        self._wait_since: float | None = None
         self._pending_regulation: float | None = None
         # Eigener PV-Energiezaehler: Summe in Wh plus letzte Stuetzstelle
         # (Zeitpunkt, Leistung) fuer die Trapezintegration.
@@ -966,7 +970,7 @@ class Bridge:
             return
 
         current = ctrl.get("regulation_output")
-        target = self._compute_regulation_output(value)
+        target = self._compute_regulation_output(value, gain=self._preview_gain())
         _LOGGER.info(
             "MQTT-Regelwert \033[1m%.1f W\033[0m (Halteband %s-%s W) | Sollwert "
             "%s W -> \033[1m%s W\033[0m | Deckel %s W%s",
@@ -1042,7 +1046,9 @@ class Bridge:
         self._unseen_delta = self._unseen_effect() + delta
         self._unseen_since = time.monotonic()
 
-    def _compute_regulation_output(self, value: float) -> int:
+    def _compute_regulation_output(
+        self, value: float, gain: float | None = None
+    ) -> int:
         """Aus der Netzleistung den naechsten Sollwert berechnen.
 
         Der Regelkreis arbeitet bewusst asymmetrisch:
@@ -1073,7 +1079,11 @@ class Bridge:
         base = int(ctrl.get("regulation_output") or 0)
 
         # Um die Totzeit bereinigter Messwert.
-        measured = value - self._unseen_effect()
+        # In der Einpendel-Strategie wird die Totzeit nicht geschaetzt,
+        # sondern abgewartet - dann waere ein Abzug sogar schaedlich.
+        measured = value
+        if self.s.self_regulation_strategy == "step":
+            measured = value - self._unseen_effect()
         reserve = self.s.self_regulation_reserve
         low = self.s.self_regulation_band_low
 
@@ -1089,7 +1099,11 @@ class Bridge:
             error = 0.0
         self._last_in_band = error == 0.0
 
-        if error > 0:
+        if gain is not None:
+            # Einpendel-Strategie: ein Schritt, gedaempft, ohne feste
+            # Obergrenze - der naechste kommt erst nach dem Einschwingen.
+            step = error * gain
+        elif error > 0:
             step = min(error * self.s.self_regulation_step_gain,
                        float(self.s.self_regulation_step_up))
         else:
@@ -1105,6 +1119,7 @@ class Bridge:
             "measured": measured,
             "error": error,
             "step": step,
+            "gain": gain if gain is not None else self.s.self_regulation_step_gain,
             "base": base,
             "cap": cap,
             "out": out,
@@ -1114,7 +1129,136 @@ class Bridge:
         self._last_target_saturated = raw > cap or raw < 0
         return out
 
+    def _preview_gain(self) -> float | None:
+        """Verstaerkung fuer die Vorschau in der INFO-Zeile."""
+        if self.s.self_regulation_strategy == "settle":
+            return self.s.self_regulation_settle_gain
+        return None
+
     def _flush_regulation(self) -> None:
+        """Ausstehenden Regelwert verarbeiten."""
+        if self._pending_regulation is None or not self._regulation_active():
+            return
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return
+        if self.s.self_regulation_strategy == "settle":
+            self._flush_settle()
+        else:
+            self._flush_stepwise()
+
+    # -- Strategie "settle": auf das Einpendeln warten -------------------
+    def _flush_settle(self) -> None:
+        """Erst korrigieren, wenn die Messung wieder ruhig ist.
+
+        Das Geraet braucht nach einem Kommando rund 10 Sekunden Totzeit und
+        weitere 10 bis 15 Sekunden Rampe. Wer in dieser Zeit nachfasst, regelt
+        denselben Fehler mehrfach aus. Statt die Totzeit zu schaetzen, wird hier
+        gewartet, bis mehrere aufeinanderfolgende Messwerte dicht beieinander
+        liegen - dann ist der Einschwingvorgang vorbei und die Messung zeigt die
+        Wirkung der letzten Korrektur.
+
+        Ausnahme: Einspeisung wird sofort korrigiert, ohne auf das Einpendeln
+        zu warten.
+        """
+        value = float(self._pending_regulation)
+        self._pending_regulation = None
+
+        # 1) Einspeisung hat Vorrang vor allem anderen.
+        if value < self.s.self_regulation_band_low and self.s.self_regulation_fast_down:
+            since = time.monotonic() - self._last_regulation_send
+            if since < self.s.self_regulation_min_interval_down:
+                return
+            self._send_regulation(value, 1.0, "Einspeisung, Sofortkorrektur")
+            return
+
+        # Nur rechnen, um die Abweichung gegen das Totband zu pruefen.
+        self._compute_regulation_output(value, gain=self.s.self_regulation_settle_gain)
+        error = float(self._last_calc.get("error", 0.0))
+        if abs(error) < self.s.self_regulation_deadband:
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
+                "kein Kommando",
+                error,
+                self.s.self_regulation_deadband,
+            )
+            return
+
+        # 2) Laeuft gerade ein Einschwingvorgang?
+        if self._wait_since is not None:
+            samples = self._settle_samples
+            samples.append(value)
+            needed = self.s.self_regulation_settle_samples
+            del samples[:-needed]
+            span = max(samples) - min(samples) if samples else 0.0
+            waited = time.monotonic() - self._wait_since
+            tolerance = self.s.self_regulation_settle_tolerance
+            max_wait = self.s.self_regulation_settle_max_wait
+
+            if len(samples) >= needed and span <= tolerance:
+                gain = self.s.self_regulation_settle_gain
+                grund = f"eingependelt, Spanne {span:.0f} W nach {waited:.0f}s"
+            elif max_wait > 0 and waited >= max_wait:
+                gain = self.s.self_regulation_timeout_gain
+                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
+            else:
+                _LOGGER.log(
+                    CALC_LEVEL,
+                    "Warte auf Einpendeln: %s/%s Werte, Spanne %.0f W "
+                    "(Toleranz %s W), seit %.0fs",
+                    len(samples),
+                    needed,
+                    span,
+                    tolerance,
+                    waited,
+                )
+                return
+        else:
+            gain = self.s.self_regulation_settle_gain
+            grund = "erste Korrektur"
+
+        self._send_regulation(value, gain, grund)
+
+    def _send_regulation(self, value: float, gain: float, grund: str) -> None:
+        """Einen Korrekturschritt berechnen und senden."""
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        out = self._compute_regulation_output(value, gain=gain)
+        last = ctrl.get("regulation_output")
+        if last is not None and out == int(last):
+            _LOGGER.log(
+                CALC_LEVEL, "Sollwert bleibt bei %s W - kein Kommando noetig", out
+            )
+            return
+
+        ctrl["regulation_output"] = out
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Korrektur (%s, %.0f%%): %s W -> %s W",
+            grund,
+            gain * 100,
+            last if last is not None else 0,
+            out,
+        )
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if self._apply_mode(refresh=False):
+            self._last_regulation_send = time.monotonic()
+            # Ab jetzt schwingt das Geraet ein - Messwerte neu sammeln.
+            self._wait_since = time.monotonic()
+            self._settle_samples.clear()
+        else:
+            _LOGGER.warning(
+                "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W, "
+                "neuer Versuch beim naechsten Durchlauf",
+                out,
+                last if last is not None else 0,
+            )
+            ctrl["regulation_output"] = last
+            self._pending_regulation = value
+            self._publish_state(GRP_ENERGY_CONTROL)
+
+    # -- Strategie "step": feste Schritte im Takt ------------------------
+    def _flush_stepwise(self) -> None:
         """Ausstehenden Regelwert senden.
 
         Ein Schritt nach unten darf Totband und Mindestabstand ueberspringen
@@ -1125,12 +1269,7 @@ class Bridge:
         der Sollwert trotz ausreichender Abweichung nicht - etwa weil er schon
         am Deckel steht - wird ebenfalls nicht gesendet.
         """
-        if self._pending_regulation is None or not self._regulation_active():
-            return
         ctrl = self.states[GRP_ENERGY_CONTROL]
-        if ctrl.get("applied_mode") != MODE_PASSIVE:
-            return
-
         value = self._pending_regulation
         out = self._compute_regulation_output(value)
         last = ctrl.get("regulation_output")

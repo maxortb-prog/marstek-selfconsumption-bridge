@@ -88,6 +88,12 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
+| `self_regulation_strategy` | `settle` | `settle` = auf das Einpendeln warten, `step` = feste Schritte im Takt (altes Verfahren). |
+| `self_regulation_settle_samples` | `3` | So viele Messwerte in Folge müssen dicht beieinander liegen. |
+| `self_regulation_settle_tolerance` | `10` | Erlaubte Spanne dieser Messwerte in Watt. |
+| `self_regulation_settle_max_wait` | `60` | Pendelt es sich nicht ein, wird nach dieser Zeit trotzdem korrigiert. `0` = unbegrenzt warten. |
+| `self_regulation_settle_gain` | `0.8` | Anteil der Abweichung nach dem Einpendeln. |
+| `self_regulation_timeout_gain` | `0.5` | Anteil nach Ablauf von `settle_max_wait`. |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
@@ -129,6 +135,44 @@ Schritt hoch   = min(Abweichung × step_gain, step_up)
 Schritt runter = Abweichung
 Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
 ```
+
+### Strategie `settle` (Standard)
+
+Der Speicher braucht nach einem Kommando rund **10 Sekunden Totzeit** und
+weitere 10 bis 15 Sekunden Rampe, bis die neue Leistung anliegt. Ein Regler,
+der alle 5 Sekunden nachfasst, korrigiert denselben Fehler vier- bis fünfmal,
+bevor die erste Korrektur überhaupt messbar ist - und schwingt.
+
+Statt diese Totzeit zu schätzen, wartet `settle` sie ab:
+
+1. Korrektur senden (Anteil `settle_gain` der Abweichung, Standard 80 %).
+2. Eingehende Messwerte sammeln, nichts tun.
+3. Liegen `settle_samples` Werte in Folge innerhalb von `settle_tolerance`
+   beieinander, ist der Einschwingvorgang vorbei - die Messung zeigt jetzt die
+   Wirkung der Korrektur. Nächste Korrektur.
+4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
+   trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
+
+**Einspeisung bricht das Warten immer ab** und wird sofort und vollständig
+korrigiert - darauf zu warten, dass sich das Signal beruhigt, wäre genau falsch.
+
+Simulation mit Totzeit 10 s, Rampe 5 s, Messung alle 5 s, Lastsprung auf 250 W
+und später auf 500 W:
+
+| | `settle` | `step` |
+|---|---|---|
+| Kommandos | 6 | 35 |
+| Netz am Ende | 10 W | −46 W (schwingt) |
+| ins Netz eingespeist | 0 Ws | 2034 Ws |
+
+Die Konvergenz dauert physikalisch bedingt 40 bis 60 Sekunden. Schneller geht
+es mit diesem Gerät nicht, unabhängig vom Verfahren.
+
+### Strategie `step`
+
+Das bisherige Verfahren: feste Schritte im Takt von `min_interval`, gebremst
+über `step_gain` und `step_up`, mit geschätzter Totzeit-Kompensation über
+`settle_time`. Nur diese Strategie nutzt jene vier Parameter.
 
 Die Regelung ist bewusst **asymmetrisch**: Hochregeln kann überschießen und
 damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
