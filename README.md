@@ -102,17 +102,17 @@ kleinen, konstanten Netzbezug (Standard 12 W) ein. Eingang ist die Netzleistung
 auf einem MQTT-Topic.
 
 ```
-Abweichung = Netzwert − Reserve
-  > 0 (zu viel Bezug)  → Schritt = min(Abweichung × 0,5 , 50 W)   gebremst
-  < 0 (zu wenig Bezug) → Schritt = Abweichung                     sofort, voll
-Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
+1. Korrektur senden (80 % der Abweichung zum Halteband)
+2. warten, bis 3 Messwerte in Folge innerhalb ±10 W liegen
+3. dann erst die nächste Korrektur
 ```
 
-Nach oben wird gedämpft, damit der Regler nicht überschießt und ins Netz
-einspeist; nach unten wird in voller Höhe und ohne Totband oder Wartezeit
-korrigiert. Der Sollwert wird nie negativ. Bleiben Werte aus, fällt er nach
-`self_regulation_input_timeout` auf 0 W. Details in
-[DOCS.md](marstek_bridge/DOCS.md).
+Der Speicher braucht rund 10 Sekunden Totzeit und weitere 10 bis 15 Sekunden
+Rampe. Wer früher nachfasst, regelt denselben Fehler mehrfach aus und schwingt.
+Das gilt für beide Richtungen: Auch eine Einspeisung wird erst nach dem
+Einpendeln korrigiert, weil der Netzwert während des Einschwingens ohnehin kurz
+ins Negative rutscht. Der Sollwert selbst wird nie negativ. Bleiben Werte aus, fällt er nach `self_regulation_input_timeout`
+auf 0 W. Details in [DOCS.md](marstek_bridge/DOCS.md).
 
 ---
 

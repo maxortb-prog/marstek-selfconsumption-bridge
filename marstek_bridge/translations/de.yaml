@@ -95,12 +95,6 @@ configuration:
       Netzleistung mit Bezug positiv. Leer = das Topic
       <mqtt_base_topic>/energy_control/regulation_input. Akzeptiert eine reine
       Zahl oder JSON mit value, state, power.
-      self_regulation_strategy: settle wartet nach jeder Korrektur, bis sich
-      die Messung wieder beruhigt hat, und korrigiert dann in einem grossen
-      Schritt. Das Geraet braucht rund 10 Sekunden Totzeit und weitere 10 bis
-      15 Sekunden Rampe - wer frueher nachfasst, regelt denselben Fehler
-      mehrfach aus und schwingt. step ist das alte Verfahren mit festen
-      Schritten im Takt (step_gain, step_up, min_interval, settle_time).
       self_regulation_settle_samples: so viele aufeinanderfolgende Messwerte
       muessen dicht beieinander liegen, damit als eingependelt gilt.
       self_regulation_settle_tolerance: erlaubte Spanne dieser Messwerte in
@@ -124,34 +118,9 @@ configuration:
       ins Negative, falls die Regelung durch Messrauschen zu nervoes wird.
       self_regulation_deadband: Abweichung des Netzwerts in Watt, unter der
       nicht geregelt wird - gemessen ab der Reserve. Reserve 8 plus Totband 5
-      heisst also: erst ab 13 W Netzbezug wird nachgeregelt. Der Wert bezieht
-      sich bewusst auf die Messung und nicht auf den berechneten Sollwert, sonst
-      haenge seine Wirkung an step_gain. Gilt nur beim Hochregeln, solange
-      fast_down aktiv ist.
-      self_regulation_min_interval: minimaler Abstand zwischen zwei
-      Regelbefehlen in Sekunden. Gilt nur beim Hochregeln.
-      self_regulation_min_interval_down: minimaler Abstand beim Runterregeln.
-      Deutlich kuerzer als der Wert nach oben, verhindert aber, dass jede
-      eingehende Nachricht einen weiteren Schritt ausloest, bevor die vorige
-      Korrektur ueberhaupt messbar ist.
-      self_regulation_settle_time: Totzeit in Sekunden zwischen einem Kommando
-      und dem Zeitpunkt, an dem sich seine Wirkung vollstaendig in der Messung
-      zeigt. Die Bridge rechnet den noch nicht sichtbaren Teil aus dem Fehler
-      heraus, sonst regelt sie denselben Fehler mehrfach aus und schiesst
-      ueber. Richtwert: Reaktionszeit des Speichers plus Mittelungsfenster des
-      Sensors. Sollte nicht groesser sein als min_interval, sonst ueberlagern
-      sich zwei Kommandos in der Kompensation. 0 = aus.
-      self_regulation_step_gain: Anteil der Abweichung, der beim Hochregeln pro
-      Schritt ausgeglichen wird. 0.5 = die Haelfte, wodurch der Regler sich dem
-      Ziel annaehert statt ueberzuschiessen.
-      self_regulation_step_up: harte Obergrenze eines Schritts nach oben in
-      Watt. Bremst den Anstieg zusaetzlich zum step_gain.
-      self_regulation_step_down: Begrenzung eines Schritts nach unten in Watt.
-      0 = unbegrenzt, damit ein ploetzlicher Lastabfall sofort ausgeregelt
-      wird.
-      self_regulation_fast_down: beim Runterregeln Totband und Mindestabstand
-      ueberspringen. Sollte aktiv bleiben, sonst wird nach einem Lastabfall bis
-      zu min_interval Sekunden lang zu viel eingespeist.
+      heisst also: erst ab 13 W Netzbezug wird nachgeregelt. Das gilt fuer
+      beide Richtungen - auch eine Einspeisung wird erst nach dem Einpendeln
+      korrigiert.
       self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
       der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
       HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.

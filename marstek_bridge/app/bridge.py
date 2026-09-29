@@ -82,10 +82,6 @@ class Bridge:
         self._last_passive_push = 0.0
         self._last_regulation_send = 0.0
         self._last_regulation_input: float | None = None
-        # Zuletzt befohlene Aenderung, die sich in der Messung noch nicht
-        # niedergeschlagen hat (Totzeit von Geraet und Sensor).
-        self._unseen_delta = 0.0
-        self._unseen_since = 0.0
         self._last_target_saturated = False
         self._last_in_band = False
         self._last_calc: dict[str, float] = {}
@@ -304,28 +300,14 @@ class Bridge:
 
         if self.s.self_regulation_enabled:
             _LOGGER.info(
-                "Selbstregelung aktiv - Topic '%s', Reserve %s W, "
-                "Schritt hoch %.0f%% / max %s W, runter %s",
+                "Selbstregelung aktiv - Topic '%s', Halteband %s-%s W, "
+                "Korrektur %.0f%% nach dem Einpendeln (%s Werte, Toleranz %s W)",
                 self.regulation_topic,
+                self.s.self_regulation_band_low,
                 self.s.self_regulation_reserve,
-                self.s.self_regulation_step_gain * 100,
-                self.s.self_regulation_step_up,
-                "ungebremst" if self.s.self_regulation_step_down <= 0
-                else f"max {self.s.self_regulation_step_down} W",
-            )
-
-        if (
-            self.s.self_regulation_enabled
-            and 0 < self.s.self_regulation_min_interval < self.s.self_regulation_settle_time
-        ):
-            _LOGGER.warning(
-                "self_regulation_settle_time (%.0fs) ist groesser als "
-                "self_regulation_min_interval (%.0fs) - aufeinanderfolgende "
-                "Kommandos ueberlagern sich in der Totzeit-Kompensation und der "
-                "Regler korrigiert zu stark nach unten. Empfehlung: "
-                "settle_time <= min_interval",
-                self.s.self_regulation_settle_time,
-                self.s.self_regulation_min_interval,
+                self.s.self_regulation_settle_gain * 100,
+                self.s.self_regulation_settle_samples,
+                self.s.self_regulation_settle_tolerance,
             )
 
         if not self._connect_mqtt_blocking():
@@ -897,8 +879,7 @@ class Bridge:
         self._pending_regulation = None
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
-            self._last_regulation_send = time.monotonic()
-            self._note_commanded_change(float(cap - int(current)))
+            self._mark_command_sent()
 
     def _set_self_regulation(self, enabled: bool) -> None:
         ctrl = self.states[GRP_ENERGY_CONTROL]
@@ -970,7 +951,9 @@ class Bridge:
             return
 
         current = ctrl.get("regulation_output")
-        target = self._compute_regulation_output(value, gain=self._preview_gain())
+        target = self._compute_regulation_output(
+            value, gain=self.s.self_regulation_settle_gain
+        )
         _LOGGER.info(
             "MQTT-Regelwert \033[1m%.1f W\033[0m (Halteband %s-%s W) | Sollwert "
             "%s W -> \033[1m%s W\033[0m | Deckel %s W%s",
@@ -995,20 +978,13 @@ class Bridge:
             grund = "im Halteband"
         elif self._last_target_saturated:
             grund = "am Anschlag begrenzt"
-        elif c["error"] > 0:
-            grund = (
-                f"hoch, gain {self.s.self_regulation_step_gain} / "
-                f"max {self.s.self_regulation_step_up} W"
-            )
         else:
-            grund = "runter, voller Betrag"
+            grund = f"{c['gain'] * 100:.0f}% der Abweichung"
         _LOGGER.log(
             CALC_LEVEL,
-            "Rechnung: Netz %.1f W - Totzeit %.1f W = %.1f W | Band %s-%s W | "
-            "Abweichung %+.1f W | Schritt %+.1f W (%s) | %s -> %s W | Deckel %s W",
+            "Rechnung: Netz %.1f W | Band %s-%s W | Abweichung %+.1f W | "
+            "Schritt %+.1f W (%s) | %s -> %s W | Deckel %s W",
             c["value"],
-            c["unseen"],
-            c["measured"],
             self.s.self_regulation_band_low,
             self.s.self_regulation_reserve,
             c["error"],
@@ -1019,121 +995,47 @@ class Bridge:
             c["cap"],
         )
 
-    def _unseen_effect(self) -> float:
-        """Noch nicht sichtbarer Anteil der zuletzt befohlenen Aenderung.
-
-        Zwischen Kommando und Messwert liegt eine Totzeit: das Geraet braucht
-        einen Moment, und der gemittelte Sensor noch laenger. Ohne Korrektur
-        wuerde der Regler denselben Fehler mehrfach ausregeln und dabei massiv
-        ueberschiessen. Der Anteil verfaellt linear ueber
-        ``self_regulation_settle_time``.
-        """
-        settle = self.s.self_regulation_settle_time
-        if settle <= 0 or self._unseen_delta == 0.0:
-            return 0.0
-        age = time.monotonic() - self._unseen_since
-        if age >= settle:
-            self._unseen_delta = 0.0
-            return 0.0
-        return self._unseen_delta * (1.0 - age / settle)
-
-    def _note_commanded_change(self, delta: float) -> None:
-        """Eine gerade gesendete Sollwertaenderung als 'noch unsichtbar' merken."""
-        if self.s.self_regulation_settle_time <= 0:
-            return
-        # Ein noch offener Rest wird mitgenommen, falls zwei Kommandos kurz
-        # hintereinander gehen.
-        self._unseen_delta = self._unseen_effect() + delta
-        self._unseen_since = time.monotonic()
-
-    def _compute_regulation_output(
-        self, value: float, gain: float | None = None
-    ) -> int:
+    def _compute_regulation_output(self, value: float, gain: float) -> int:
         """Aus der Netzleistung den naechsten Sollwert berechnen.
 
-        Der Regelkreis arbeitet bewusst asymmetrisch:
-
-        * **hoch** (zu viel Netzbezug) wird gebremst - pro Schritt nur ein
-          Anteil der Abweichung (``step_gain``) und hoechstens ``step_up`` Watt.
-          Ein zu grosser Sprung nach oben wuerde ueberschiessen und damit
-          Einspeisung ins Netz verursachen.
-        * **runter** (zu wenig Netzbezug) geschieht in voller Hoehe, weil das
-          immer die sichere Richtung ist.
+        Zwischen ``self_regulation_band_low`` und ``self_regulation_reserve``
+        liegt ein Halteband, in dem gar nicht geregelt wird: ein Netzbezug
+        unterhalb der Reserve ist besser als die Reserve selbst und kein Grund,
+        Speicherleistung zurueckzunehmen. Ausserhalb des Bands wird in beide
+        Richtungen auf die Reserve zurueckgeregelt, und zwar um den Anteil
+        ``gain`` der Abweichung.
 
         Nach unten wird bei 0 W begrenzt, nach oben durch die Number-Entity
         *Passive power*. Da immer der bereits begrenzte Sollwert die Basis des
         naechsten Schritts ist, kann der Regler nicht ueber den Deckel
         hinauslaufen (kein Windup).
-
-        Zwischen ``self_regulation_band_low`` und ``self_regulation_reserve``
-        liegt ein Halteband, in dem gar nicht geregelt wird: ein Netzbezug
-        unterhalb der Reserve ist besser als die Reserve selbst und kein Grund,
-        Speicherleistung zurueckzunehmen.
-
-        Vom Fehler wird ausserdem der Teil der zuletzt befohlenen Aenderung
-        abgezogen, der sich in der Messung noch nicht zeigen kann - siehe
-        ``_unseen_effect``.
         """
         ctrl = self.states[GRP_ENERGY_CONTROL]
         cap = max(0, min(self.s.passive_power_max, int(ctrl.get("passive_power", 0))))
         base = int(ctrl.get("regulation_output") or 0)
 
-        # Um die Totzeit bereinigter Messwert.
-        # In der Einpendel-Strategie wird die Totzeit nicht geschaetzt,
-        # sondern abgewartet - dann waere ein Abzug sogar schaedlich.
-        measured = value
-        if self.s.self_regulation_strategy == "step":
-            measured = value - self._unseen_effect()
         reserve = self.s.self_regulation_reserve
         low = self.s.self_regulation_band_low
-
-        # Halteband: zwischen band_low und der Reserve ist alles in Ordnung -
-        # ein kleinerer Netzbezug als die Reserve ist besser als die Reserve
-        # selbst, dafuer wird nicht gegengeregelt. Ausserhalb des Bands wird in
-        # beide Richtungen auf die Reserve zurueckgeregelt.
-        if measured > reserve:
-            error = measured - reserve
-        elif measured < low:
-            error = measured - reserve
+        if value > reserve or value < low:
+            error = value - reserve
         else:
             error = 0.0
         self._last_in_band = error == 0.0
 
-        if gain is not None:
-            # Einpendel-Strategie: ein Schritt, gedaempft, ohne feste
-            # Obergrenze - der naechste kommt erst nach dem Einschwingen.
-            step = error * gain
-        elif error > 0:
-            step = min(error * self.s.self_regulation_step_gain,
-                       float(self.s.self_regulation_step_up))
-        else:
-            step = error
-            if self.s.self_regulation_step_down > 0:
-                step = max(step, -float(self.s.self_regulation_step_down))
-
+        step = error * gain
         raw = base + step
         out = int(max(0, min(cap, round(raw))))
+        self._last_target_saturated = raw > cap or raw < 0
         self._last_calc = {
             "value": value,
-            "unseen": value - measured,
-            "measured": measured,
             "error": error,
             "step": step,
-            "gain": gain if gain is not None else self.s.self_regulation_step_gain,
+            "gain": gain,
             "base": base,
             "cap": cap,
             "out": out,
         }
-        # Begrenzt? Dann steht der Regler am Anschlag und das Totband darf den
-        # letzten Schritt dorthin nicht blockieren.
-        self._last_target_saturated = raw > cap or raw < 0
         return out
-
-    def _preview_gain(self) -> float | None:
-        """Verstaerkung fuer die Vorschau in der INFO-Zeile."""
-        if self.s.self_regulation_strategy == "settle":
-            return self.s.self_regulation_settle_gain
-        return None
 
     def _flush_regulation(self) -> None:
         """Ausstehenden Regelwert verarbeiten."""
@@ -1142,12 +1044,8 @@ class Bridge:
         ctrl = self.states[GRP_ENERGY_CONTROL]
         if ctrl.get("applied_mode") != MODE_PASSIVE:
             return
-        if self.s.self_regulation_strategy == "settle":
-            self._flush_settle()
-        else:
-            self._flush_stepwise()
+        self._flush_settle()
 
-    # -- Strategie "settle": auf das Einpendeln warten -------------------
     def _flush_settle(self) -> None:
         """Erst korrigieren, wenn die Messung wieder ruhig ist.
 
@@ -1158,21 +1056,24 @@ class Bridge:
         liegen - dann ist der Einschwingvorgang vorbei und die Messung zeigt die
         Wirkung der letzten Korrektur.
 
-        Ausnahme: Einspeisung wird sofort korrigiert, ohne auf das Einpendeln
-        zu warten.
+        Das gilt fuer beide Richtungen. Auch eine Einspeisung wird erst nach dem
+        Einpendeln korrigiert: Waehrend des Einschwingens rutscht der Netzwert
+        praktisch immer kurz ins Negative, und sofort dagegenzuregeln hiesse,
+        auf ein bereits vorbeigezogenes Ereignis zu reagieren - das erzeugt
+        genau das Schwingen, das vermieden werden soll. Ist der Wert nach dem
+        Einpendeln immer noch negativ, wird er wie jede andere Abweichung
+        korrigiert.
         """
         value = float(self._pending_regulation)
         self._pending_regulation = None
+        waiting = self._wait_since is not None
 
-        # 1) Einspeisung hat Vorrang vor allem anderen.
-        if value < self.s.self_regulation_band_low and self.s.self_regulation_fast_down:
-            since = time.monotonic() - self._last_regulation_send
-            if since < self.s.self_regulation_min_interval_down:
-                return
-            self._send_regulation(value, 1.0, "Einspeisung, Sofortkorrektur")
-            return
+        # Messwert gehoert zur laufenden Beobachtung, unabhaengig davon, ob er
+        # spaeter eine Korrektur ausloest.
+        if waiting:
+            self._settle_samples.append(value)
+            del self._settle_samples[: -self.s.self_regulation_settle_samples]
 
-        # Nur rechnen, um die Abweichung gegen das Totband zu pruefen.
         self._compute_regulation_output(value, gain=self.s.self_regulation_settle_gain)
         error = float(self._last_calc.get("error", 0.0))
         if abs(error) < self.s.self_regulation_deadband:
@@ -1185,12 +1086,9 @@ class Bridge:
             )
             return
 
-        # 2) Laeuft gerade ein Einschwingvorgang?
-        if self._wait_since is not None:
+        if waiting:
             samples = self._settle_samples
-            samples.append(value)
             needed = self.s.self_regulation_settle_samples
-            del samples[:-needed]
             span = max(samples) - min(samples) if samples else 0.0
             waited = time.monotonic() - self._wait_since
             tolerance = self.s.self_regulation_settle_tolerance
@@ -1206,12 +1104,13 @@ class Bridge:
                 _LOGGER.log(
                     CALC_LEVEL,
                     "Warte auf Einpendeln: %s/%s Werte, Spanne %.0f W "
-                    "(Toleranz %s W), seit %.0fs",
+                    "(Toleranz %s W), seit %.0fs, Abweichung %+.1f W",
                     len(samples),
                     needed,
                     span,
                     tolerance,
                     waited,
+                    error,
                 )
                 return
         else:
@@ -1219,6 +1118,13 @@ class Bridge:
             grund = "erste Korrektur"
 
         self._send_regulation(value, gain, grund)
+
+    def _mark_command_sent(self) -> None:
+        """Nach jedem gesendeten Sollwert beginnt ein neuer Einschwingvorgang."""
+        now = time.monotonic()
+        self._last_regulation_send = now
+        self._wait_since = now
+        self._settle_samples.clear()
 
     def _send_regulation(self, value: float, gain: float, grund: str) -> None:
         """Einen Korrekturschritt berechnen und senden."""
@@ -1242,96 +1148,8 @@ class Bridge:
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
-            self._last_regulation_send = time.monotonic()
-            # Ab jetzt schwingt das Geraet ein - Messwerte neu sammeln.
-            self._wait_since = time.monotonic()
-            self._settle_samples.clear()
+            self._mark_command_sent()
         else:
-            _LOGGER.warning(
-                "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W, "
-                "neuer Versuch beim naechsten Durchlauf",
-                out,
-                last if last is not None else 0,
-            )
-            ctrl["regulation_output"] = last
-            self._pending_regulation = value
-            self._publish_state(GRP_ENERGY_CONTROL)
-
-    # -- Strategie "step": feste Schritte im Takt ------------------------
-    def _flush_stepwise(self) -> None:
-        """Ausstehenden Regelwert senden.
-
-        Ein Schritt nach unten darf Totband und Mindestabstand ueberspringen
-        (``self_regulation_fast_down``), damit auf einen plotzlichen Lastabfall
-        sofort reagiert wird. Nach oben bleiben beide Bremsen aktiv.
-
-        Das Totband bezieht sich auf die Abweichung des Netzwerts. Aendert sich
-        der Sollwert trotz ausreichender Abweichung nicht - etwa weil er schon
-        am Deckel steht - wird ebenfalls nicht gesendet.
-        """
-        ctrl = self.states[GRP_ENERGY_CONTROL]
-        value = self._pending_regulation
-        out = self._compute_regulation_output(value)
-        last = ctrl.get("regulation_output")
-        going_down = last is not None and out < int(last)
-        fast = going_down and self.s.self_regulation_fast_down
-
-        # Auch ein Fast-Down haelt einen (kuerzeren) Mindestabstand ein. Ohne
-        # ihn wuerde jede eingehende Nachricht einen weiteren Schritt ausloesen,
-        # bevor die vorige Korrektur ueberhaupt messbar ist.
-        since_send = time.monotonic() - self._last_regulation_send
-        if fast:
-            if since_send < self.s.self_regulation_min_interval_down:
-                return  # Wert bleibt vorgemerkt
-        else:
-            if since_send < self.s.self_regulation_min_interval:
-                return  # Wert bleibt vorgemerkt und wird spaeter gesendet
-            # Das Totband gilt fuer die Abweichung des Netzwerts, nicht fuer
-            # den berechneten Sollwert. Sonst haengt seine Wirkung an der
-            # Verstaerkung: bei gain 0.5 entspraeche ein Totband von 5 W am
-            # Ausgang einer Abweichung von 10 W am Eingang.
-            error = float(self._last_calc.get("error", 0.0))
-            if abs(error) < self.s.self_regulation_deadband:
-                self._pending_regulation = None
-                _LOGGER.log(
-                    CALC_LEVEL,
-                    "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
-                    "kein Kommando",
-                    error,
-                    self.s.self_regulation_deadband,
-                )
-                return
-
-        if last is not None and out == int(last):
-            self._pending_regulation = None
-            _LOGGER.log(
-                CALC_LEVEL,
-                "Sollwert bleibt bei %s W - kein Kommando noetig",
-                out,
-            )
-            return
-
-        self._pending_regulation = None
-        ctrl["regulation_output"] = out
-        _LOGGER.log(
-            CALC_LEVEL,
-            "Selbstregelung %s: %s W -> %s W wird gesendet%s",
-            "RUNTER" if going_down else "hoch",
-            last if last is not None else 0,
-            out,
-            " (Fast-Down, Totband/Takt uebersprungen)" if fast
-            else (" (Anschlag, Totband uebersprungen)"
-                  if self._last_target_saturated else ""),
-        )
-        self._publish_state(GRP_ENERGY_CONTROL)
-        if self._apply_mode(refresh=False):
-            self._last_regulation_send = time.monotonic()
-            self._note_commanded_change(float(out - (last if last is not None else 0)))
-        else:
-            # Das Kommando ist nicht angekommen - der Speicher laeuft weiter
-            # mit dem alten Sollwert. Den internen Stand zurueckdrehen, sonst
-            # rechnet der naechste Schritt von einem Wert aus, den das Geraet
-            # nie bekommen hat.
             _LOGGER.warning(
                 "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W, "
                 "neuer Versuch beim naechsten Durchlauf",
@@ -1368,13 +1186,11 @@ class Bridge:
             timeout,
             self.regulation_topic,
         )
-        previous = int(current)
         ctrl["regulation_output"] = 0
         self._pending_regulation = None
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
-            self._last_regulation_send = time.monotonic()
-            self._note_commanded_change(float(-previous))
+            self._mark_command_sent()
 
     # =================================================================
     # MQTT-Kommandos

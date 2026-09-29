@@ -88,7 +88,6 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
-| `self_regulation_strategy` | `settle` | `settle` = auf das Einpendeln warten, `step` = feste Schritte im Takt (altes Verfahren). |
 | `self_regulation_settle_samples` | `3` | So viele Messwerte in Folge müssen dicht beieinander liegen. |
 | `self_regulation_settle_tolerance` | `10` | Erlaubte Spanne dieser Messwerte in Watt. |
 | `self_regulation_settle_max_wait` | `60` | Pendelt es sich nicht ein, wird nach dieser Zeit trotzdem korrigiert. `0` = unbegrenzt warten. |
@@ -98,13 +97,6 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
 | `self_regulation_deadband` | `10` | Abweichung des **Netzwerts** ab der Reserve, unter der nicht geregelt wird (nur beim Hochregeln). |
-| `self_regulation_min_interval` | `5.0` | Minimaler Abstand zwischen zwei Regelbefehlen (nur beim Hochregeln). |
-| `self_regulation_min_interval_down` | `5.0` | Minimaler Abstand beim Runterregeln. |
-| `self_regulation_settle_time` | `10.0` | Totzeit, über die eine gesendete Änderung als „in der Messung noch nicht sichtbar" gilt. `0` = aus. |
-| `self_regulation_step_gain` | `0.5` | Anteil der Abweichung pro Schritt nach oben. |
-| `self_regulation_step_up` | `50` | Harte Obergrenze eines Schritts nach oben in Watt. |
-| `self_regulation_step_down` | `0` | Begrenzung nach unten in Watt, `0` = unbegrenzt. |
-| `self_regulation_fast_down` | `true` | Runterregeln überspringt Totband und Mindestabstand. |
 | `self_regulation_input_timeout` | `60` | Sekunden ohne Wert bis Rückfall auf 0 W, `0` = aus. |
 
 ## Betrieb
@@ -125,25 +117,22 @@ positiv, Einspeisung negativ) und regelt sie auf `self_regulation_reserve`
 ein - typisch 10-15 W, damit der Bezug nie ins Negative kippt.
 
 ```
-Messwert = Netzwert − Δ_unsichtbar
+Netzwert > Reserve      → Abweichung = Netzwert − Reserve
+band_low ≤ N ≤ Reserve  → Abweichung = 0        Halteband, nichts tun
+Netzwert < band_low     → Abweichung = Netzwert − Reserve
 
-Messwert > Reserve      → Abweichung = Messwert − Reserve   hoch, gebremst
-band_low ≤ M ≤ Reserve  → Abweichung = 0                    Halteband, nichts
-Messwert < band_low     → Abweichung = Messwert − Reserve   runter, voll
-
-Schritt hoch   = min(Abweichung × step_gain, step_up)
-Schritt runter = Abweichung
+Schritt  = Abweichung × gain        gain = settle_gain | timeout_gain | 1,0
 Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
 ```
 
-### Strategie `settle` (Standard)
+### So regelt die Bridge
 
 Der Speicher braucht nach einem Kommando rund **10 Sekunden Totzeit** und
 weitere 10 bis 15 Sekunden Rampe, bis die neue Leistung anliegt. Ein Regler,
 der alle 5 Sekunden nachfasst, korrigiert denselben Fehler vier- bis fünfmal,
 bevor die erste Korrektur überhaupt messbar ist - und schwingt.
 
-Statt diese Totzeit zu schätzen, wartet `settle` sie ab:
+Statt diese Totzeit zu schätzen, wartet die Bridge sie ab:
 
 1. Korrektur senden (Anteil `settle_gain` der Abweichung, Standard 80 %).
 2. Eingehende Messwerte sammeln, nichts tun.
@@ -153,29 +142,30 @@ Statt diese Totzeit zu schätzen, wartet `settle` sie ab:
 4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
    trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
 
-**Einspeisung bricht das Warten immer ab** und wird sofort und vollständig
-korrigiert - darauf zu warten, dass sich das Signal beruhigt, wäre genau falsch.
+**Das gilt für beide Richtungen.** Auch eine Einspeisung wird erst nach dem
+Einpendeln korrigiert. Während des Einschwingens rutscht der Netzwert praktisch
+immer kurz ins Negative - sofort dagegenzuregeln hieße, auf ein bereits
+vorbeigezogenes Ereignis zu reagieren, und erzeugt genau das Schwingen, das
+vermieden werden soll. Ist der Wert nach dem Einpendeln immer noch negativ,
+wird er wie jede andere Abweichung korrigiert.
 
 Simulation mit Totzeit 10 s, Rampe 5 s, Messung alle 5 s, Lastsprung auf 250 W
 und später auf 500 W:
 
-| | `settle` | `step` |
+| | Einpendeln abwarten | feste Schritte im Takt (bis 0.0.27) |
 |---|---|---|
 | Kommandos | 6 | 35 |
 | Netz am Ende | 10 W | −46 W (schwingt) |
 | ins Netz eingespeist | 0 Ws | 2034 Ws |
 
-Die Konvergenz dauert physikalisch bedingt 40 bis 60 Sekunden. Schneller geht
-es mit diesem Gerät nicht, unabhängig vom Verfahren.
+Die Konvergenz dauert physikalisch bedingt 40 bis 60 Sekunden, bei einem großen
+Lastabfall auch zwei Minuten. Schneller geht es mit diesem Gerät nicht,
+unabhängig vom Verfahren. Bricht die Last ein, während der Speicher noch hohe
+Leistung abgibt, fließt die Differenz bis zur nächsten Korrektur ins Netz - das
+verursacht die Last, nicht die Regelung. Wer das begrenzen will, senkt den
+Deckel *Passive power*.
 
-### Strategie `step`
-
-Das bisherige Verfahren: feste Schritte im Takt von `min_interval`, gebremst
-über `step_gain` und `step_up`, mit geschätzter Totzeit-Kompensation über
-`settle_time`. Nur diese Strategie nutzt jene vier Parameter.
-
-Die Regelung ist bewusst **asymmetrisch**: Hochregeln kann überschießen und
-damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
+### Weitere Eigenschaften
 
 * **Halteband** zwischen `band_low` (Standard 0 W) und `reserve`. Liegt der
   Netzbezug darin, passiert nichts. Ein Bezug von 4 W ist besser als die
@@ -185,14 +175,6 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   den Arbeitspunkt an die Kante legen, wo ihn das nächste Messrauschen wieder
   ins Negative kippt.
 
-* **Nach oben gebremst.** Pro Schritt wird nur `step_gain` (Standard 0,5) der
-  Abweichung ausgeglichen, höchstens aber `step_up` Watt. Der Regler nähert
-  sich dem Ziel an, statt darüber hinauszuschießen.
-* **Nach unten sofort.** Der volle Betrag wird in einem Schritt korrigiert. Ein
-  Lastabfall von 500 auf 50 W zieht den Sollwert in einem Zug herunter.
-* **Fast-Down.** Mit `self_regulation_fast_down` überspringt ein Schritt nach
-  unten sowohl Totband als auch Mindestabstand - sonst würde nach einem
-  Lastabfall bis zu `min_interval` Sekunden lang zu viel eingespeist.
 * **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
   sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel. Sie lässt
   sich im laufenden Betrieb verändern, etwa SOC-abhängig aus einer
@@ -205,30 +187,14 @@ damit Einspeisung verursachen, Runterregeln ist immer die sichere Richtung.
   Regelschritt genutzt.
 * **Das Totband gilt für den Netzwert, nicht für den Sollwert.** Die Schwelle
   ist `reserve + deadband`: bei Reserve 8 W und Totband 5 W wird ab 13 W
-  Netzbezug nachgeregelt. Würde das Totband auf den berechneten Sollwert
-  wirken, hinge seine Wirkung an `step_gain` - bei `gain 0.5` entspräche ein
-  Totband von 5 W am Ausgang einer Abweichung von 10 W am Eingang.
+  Netzbezug nachgeregelt. Nach unten greift es praktisch nie, weil schon die
+  Reserve allein größer ist als ein üblicher Totbandwert.
 * **Ändert sich der Sollwert nicht**, wird nichts gesendet - etwa wenn er
   bereits am Deckel steht.
 * **Untergrenze** ist fest 0 W. Der Sollwert wird nie negativ, es wird also
   weder ins Netz eingespeist noch aus dem Netz geladen.
 * **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der
   Regler kann sich nicht über den Deckel hinaus aufsummieren.
-* **Totzeit-Kompensation.** Zwischen Kommando und Messwert vergeht Zeit: der
-  Speicher braucht einen Moment, ein gemittelter Sensor deutlich länger. Ohne
-  Korrektur sieht der Regler seine eigene, gerade abgeschickte Änderung noch
-  nicht und regelt denselben Fehler mehrfach aus - das Ergebnis ist ein
-  massives Überschießen und anschließendes Schwingen. Die Bridge merkt sich
-  deshalb die zuletzt befohlene Änderung Δ und zieht den noch nicht sichtbaren
-  Anteil vom Fehler ab. Er verfällt linear über `self_regulation_settle_time`.
-  Richtwert für diese Zeit: Reaktionszeit des Speichers plus Mittelungsfenster
-  des Sensors, typisch 10-20 Sekunden. **`settle_time` sollte nicht größer sein
-  als `min_interval`** - sonst überlagern sich zwei aufeinanderfolgende
-  Kommandos in der Kompensation und der Regler korrigiert zu stark nach unten.
-  Die Bridge warnt beim Start, wenn das der Fall ist.
-* **Takt nach unten.** Auch ein Fast-Down hält `min_interval_down` (Standard
-  5 s) ein. Übersprungen werden nur das Totband und der längere
-  Aufwärts-Takt.
 * **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert alle
   `cd_time/2` Sekunden erneut und startet damit den Countdown des Geräts neu.
   Bleiben Werte länger als `self_regulation_input_timeout` aus (HA-Neustart,

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.29 - 2026-09-29
+
+- Die Regelung ist jetzt in beide Richtungen gleich: auch eine Einspeisung wird
+  erst nach dem Einpendeln korrigiert. Der Sofort-Pfad entfiel, weil der
+  Netzwert waehrend jedes Einschwingvorgangs kurz ins Negative rutscht - sofort
+  dagegenzuregeln hiess, auf ein vorbeigezogenes Ereignis zu reagieren, und hat
+  erneut Schwingen erzeugt.
+- `self_regulation_min_interval_down` entfaellt, es gab nur den Sofort-Pfad.
+- **Fix:** Eine Senkung des Deckels und der Eingangs-Timeout senden ebenfalls
+  Kommandos, haben die Einpendel-Erkennung aber nicht zurueckgesetzt. Die
+  naechste Messung waere faelschlich als eingependelt gewertet worden.
+
+## 0.0.28 - 2026-09-29
+
+**Achtung: entfallene Optionen.** Nach dem Update einmal die Add-on
+Konfiguration oeffnen und speichern.
+
+- Die Schritt-Strategie wurde vollstaendig entfernt; es bleibt das Warten auf
+  das Einpendeln. Damit entfallen `self_regulation_strategy`,
+  `self_regulation_step_gain`, `self_regulation_step_up`,
+  `self_regulation_step_down`, `self_regulation_min_interval`,
+  `self_regulation_settle_time` und `self_regulation_fast_down`.
+- Einspeisung wird jetzt immer sofort und vollstaendig korrigiert; die Sperre
+  laesst sich nicht mehr abschalten. `self_regulation_min_interval_down`
+  verhindert weiterhin, dass mehrere Korrekturen direkt aufeinander folgen.
+- Die geschaetzte Totzeit-Kompensation ist mit der Schritt-Strategie entfallen;
+  die Totzeit wird abgewartet statt geschaetzt.
+
 ## 0.0.27 - 2026-09-29
 
 - **Neue Regelstrategie `settle` als Standard.** Statt die Totzeit des Geraets

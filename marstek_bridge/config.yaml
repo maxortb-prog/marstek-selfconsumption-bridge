@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.27"
+version: "0.0.29"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -69,7 +69,6 @@ options:
     passive_keepalive: false
     self_regulation_enabled: false
     self_regulation_topic: ""
-    self_regulation_strategy: "settle"
     self_regulation_settle_samples: 3
     self_regulation_settle_tolerance: 10
     self_regulation_settle_max_wait: 60
@@ -78,13 +77,6 @@ options:
     self_regulation_reserve: 12
     self_regulation_band_low: 0
     self_regulation_deadband: 10
-    self_regulation_min_interval: 5.0
-    self_regulation_min_interval_down: 5.0
-    self_regulation_settle_time: 10.0
-    self_regulation_step_gain: 0.5
-    self_regulation_step_up: 50
-    self_regulation_step_down: 0
-    self_regulation_fast_down: true
     self_regulation_input_timeout: 60
   general_settings:
     restore_state: true
@@ -137,7 +129,6 @@ schema:
     passive_keepalive: bool
     self_regulation_enabled: bool
     self_regulation_topic: str?
-    self_regulation_strategy: list(settle|step)
     self_regulation_settle_samples: int(2,20)
     self_regulation_settle_tolerance: int(1,500)
     self_regulation_settle_max_wait: int(0,600)
@@ -146,13 +137,6 @@ schema:
     self_regulation_reserve: int(0,500)
     self_regulation_band_low: int(-500,500)
     self_regulation_deadband: int(0,500)
-    self_regulation_min_interval: float(0,60)
-    self_regulation_min_interval_down: float(0,60)
-    self_regulation_settle_time: float(0,120)
-    self_regulation_step_gain: float(0.05,1.0)
-    self_regulation_step_up: int(1,5000)
-    self_regulation_step_down: int(0,5000)
-    self_regulation_fast_down: bool
     self_regulation_input_timeout: int(0,3600)
   general_settings:
     restore_state: bool
