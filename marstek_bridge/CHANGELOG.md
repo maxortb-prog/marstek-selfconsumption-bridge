@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.36 - 2026-10-01
+
+- Jede `ES.GetStatus`-Antwort wird auf `calc` mit Netz-, Batterie- und
+  PV-Leistung sowie SOC protokolliert. Damit laesst sich nachtraeglich
+  entscheiden, ob ein Sprung im Messwert vom Speicher oder von einem
+  Verbraucher kam.
+- Neue Option `poll_only_at_rest` (Standard an): Statusabfragen werden
+  verschoben, solange die Regelung auf die Reaktion des Geraets oder auf das
+  Einpendeln wartet. In dieser Zeit rechnet der Speicher an der neuen Vorgabe
+  und laesst Abfragen haeufig in den Timeout laufen. Eine Abfrage, die das
+  Doppelte ihres Intervalls ueberfaellig ist, laeuft weiterhin.
+
 ## 0.0.35 - 2026-09-30
 
 - **Erkennung eines haengenden Regelsignals.** Publiziert ein Sensor weiter,

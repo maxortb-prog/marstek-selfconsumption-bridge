@@ -52,6 +52,7 @@ Leerer Benutzername = anonyme Verbindung.
 | `request_retries` | `2` | `0` = kein Retry, Nachricht wird verworfen und löst **keinen** Watchdog aus. `>0` = Wiederholungen, bei endgültigem Fehlschlag Watchdog. |
 | `request_max_time` | `10.0` | Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten, greift der Watchdog (Sonderfall). |
 | `poll_enabled` | `true` | Hauptschalter für das zyklische Polling. |
+| `poll_only_at_rest` | `true` | Statusabfragen nur, wenn die Regelung in Ruhe ist. |
 | `poll_quiet_after_write` | `3.0` | Ruhezeit nach einem Schreibkommando, in der keine Statusabfrage startet. |
 | `poll_interval_es_status` | `10` | `ES.GetStatus` - die laufenden Leistungswerte. |
 | `poll_interval_battery` | `300` | `Bat.GetStatus` - vor allem die Temperatur. |
@@ -394,6 +395,19 @@ Einpendeln" - erscheinen höchstens alle 10 Sekunden, ebenso die INFO-Zeile für
 einen Messwert, der am Sollwert nichts ändert. Sonst liefe bei einem
 Sekundentakt jede Sekunde eine Zeile durch.
 
+### Was das Gerät meldet
+
+Jede `ES.GetStatus`-Antwort erscheint auf `calc` mit den Werten, die für die
+Fehlersuche zählen:
+
+```
+CALC  Geraet meldet: Netz 33 W | Batterie -40 W | PV 0 W | SOC 62 % | Insel 0 W
+```
+
+Damit lässt sich im Nachhinein entscheiden, ob ein Sprung im Messwert vom
+Speicher kam oder von einem Verbraucher: Liefert `Netz` weiter plausible Werte
+und `Batterie` die befohlene Leistung, hat der Speicher gearbeitet.
+
 ### Was im Log steht
 
 Auf Level `info` erzeugt jede empfangene MQTT-Nachricht genau eine Zeile:
@@ -496,6 +510,24 @@ die Selbstregelung aktiv, sendet der Button gar nichts mehr: Zeitpunkt und
 Leistung bestimmt dann die Regelschleife samt Keepalive. Der zuletzt empfangene
 Regelwert wird lediglich für den nächsten Durchlauf vorgemerkt. Sonst löst eine Automation, die zyklisch auf
 Apply drückt, bei jedem Druck ein zusätzliches `ES.GetMode` aus.
+
+### Abfragen nur im Ruhezustand
+
+Während die Selbstregelung auf die Reaktion des Geräts oder auf das Einpendeln
+wartet, rechnet der Speicher an der neuen Vorgabe und antwortet auf
+Statusabfragen oft gar nicht mehr - die Praxis zeigt Timeouts von mehreren
+Sekunden. Die gelieferten Werte wären in dieser Phase ohnehin Momentaufnahmen
+eines Übergangs.
+
+`poll_only_at_rest` verschiebt Abfragen deshalb, bis die Regelung eingependelt
+ist und nichts zu korrigieren hat. Eine Abfrage, die das Doppelte ihres
+Intervalls überfällig ist, läuft trotzdem - sie kann nicht verhungern, auch
+wenn die Regelung dauernd beschäftigt ist.
+
+Das ist die weiter gefasste Fassung von `poll_quiet_after_write`: Die drei
+Sekunden dort decken nur den Moment nach einem Schreibkommando ab, während der
+Speicher in Wahrheit 20 bis 25 Sekunden mit dem Einschwingen beschäftigt ist.
+Ist die Selbstregelung aus, greift weiterhin nur die Ruhezeit.
 
 ### Ruhezeit nach Schreibkommandos
 

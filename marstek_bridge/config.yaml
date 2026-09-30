@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.35"
+version: "0.0.36"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -47,6 +47,7 @@ options:
     request_retries: 2
     request_max_time: 10.0
     poll_quiet_after_write: 3.0
+    poll_only_at_rest: true
     poll_enabled: true
     poll_interval_es_status: 10
     poll_interval_battery: 300
@@ -113,6 +114,7 @@ schema:
     request_retries: int(0,10)
     request_max_time: float(0.5,300)
     poll_quiet_after_write: float(0,60)
+    poll_only_at_rest: bool
     poll_enabled: bool
     poll_interval_es_status: int(0,86400)
     poll_interval_battery: int(0,86400)

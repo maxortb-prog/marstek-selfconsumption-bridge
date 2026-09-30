@@ -593,6 +593,16 @@ class Bridge:
             return False
         clean = _clean(result)
         self.states[GRP_ENERGY_STATUS] = clean
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Geraet meldet: Netz %s W | Batterie %s W | PV %s W | SOC %s %% | "
+            "Insel %s W",
+            clean.get("ongrid_power"),
+            clean.get("bat_power"),
+            clean.get("pv_power"),
+            clean.get("bat_soc"),
+            clean.get("offgrid_power"),
+        )
         self._update_pv_energy(clean.get("pv_power"))
         self._publish_group(GRP_ENERGY_STATUS, ENERGY_STATUS_ENTITIES)
         return True
@@ -1598,6 +1608,16 @@ class Bridge:
             # Die Abfrage wird verschoben - aber nur so lange, bis sie das
             # Doppelte ihres Intervalls ueberfaellig ist, damit sie bei dichtem
             # Regeltakt nicht dauerhaft verhungert.
+            # Waehrend die Regelung arbeitet, rechnet das Geraet selbst an der
+            # neuen Vorgabe und antwortet oft gar nicht mehr. Die Werte waeren
+            # in dieser Zeit ohnehin nur Momentaufnahmen eines Uebergangs.
+            if self._regulation_busy() and now - last < interval * 2:
+                self._log_quiet(
+                    "Abfrage %s verschoben - die Regelung arbeitet gerade",
+                    name,
+                )
+                return
+
             remaining = self._write_quiet_remaining()
             if remaining > 0 and now - last < interval * 2:
                 _LOGGER.log(
@@ -1675,6 +1695,21 @@ class Bridge:
         Leere laufen. Waehrend dieser Ruhezeit wird nicht abgefragt.
         """
         self._last_write = time.monotonic()
+
+    def _regulation_busy(self) -> bool:
+        """True, solange die Regelung auf Reaktion oder Einpendeln wartet.
+
+        Dann laeuft das Geraet auf eine neue Vorgabe zu und ist mit sich selbst
+        beschaeftigt. Eine Statusabfrage trifft es dort haeufig so ungluecklich,
+        dass sie in den Timeout laeuft - und die gelieferten Werte waeren
+        Momentaufnahmen eines Uebergangs.
+        """
+        if not self.s.poll_only_at_rest or not self._regulation_active():
+            return False
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return False
+        return not self._at_rest
 
     def _write_quiet_remaining(self) -> float:
         quiet = self.s.poll_quiet_after_write

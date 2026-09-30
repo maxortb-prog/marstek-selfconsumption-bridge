@@ -43,6 +43,11 @@ configuration:
       time - the battery is busy right afterwards and lets queries run into a
       timeout. An overdue query still runs once it exceeds twice its interval.
       0 = off.
+      poll_only_at_rest: run status queries only while the controller is at
+      rest - not while it waits for the device to react or for the signal to
+      settle. During that time the device is working on the new setpoint and
+      often lets queries run into a timeout; the values would be snapshots of a
+      transition anyway. A query overdue by twice its interval still runs.
       poll_enabled: master switch for cyclic polling. Off = data is only read
       at start-up and through the refresh buttons, e.g. from a Home Assistant
       automation.

@@ -45,6 +45,12 @@ configuration:
       laesst Abfragen sonst in den Timeout laufen. Eine ueberfaellige Abfrage
       wird trotzdem ausgefuehrt, sobald sie das Doppelte ihres Intervalls
       ueberschreitet. 0 = aus.
+      poll_only_at_rest: Statusabfragen nur ausfuehren, wenn die Regelung in
+      Ruhe ist - also nicht waehrend sie auf die Reaktion des Geraets oder auf
+      das Einpendeln wartet. In dieser Zeit rechnet das Geraet selbst an der
+      neuen Vorgabe und laesst Abfragen haeufig in den Timeout laufen; die
+      Werte waeren ohnehin nur Momentaufnahmen eines Uebergangs. Eine Abfrage,
+      die das Doppelte ihres Intervalls ueberfaellig ist, laeuft trotzdem.
       poll_enabled: Hauptschalter fuer das zyklische Abfragen. Aus = es wird
       nur nach dem Start und über die Refresh-Buttons abgefragt, etwa aus einer
       HA-Automation heraus.
