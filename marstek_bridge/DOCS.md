@@ -98,6 +98,8 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_timeout_gain` | `0.5` | Anteil nach Ablauf von `settle_max_wait`. |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
+| `self_regulation_deadband_percent` | `0.0` | Skaliert das Totband linear mit dem Sollwert (nur beim Hochregeln). `0` = aus. |
+| `self_regulation_stuck_limit` | `3` | Kommandos ohne Reaktion, bis das Regelsignal als unbrauchbar gilt. `0` = aus. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
 | `self_regulation_base_load` | `0` | Grundlast der Phase als **Untergrenze** für den Sollwert. `0` = aus. |
 | `self_regulation_deadband` | `10` | Abweichung des **Netzwerts** ab der Reserve, unter der nicht geregelt wird (nur beim Hochregeln). |
@@ -182,6 +184,21 @@ aus, Grundlast 50 W:
 |---|---|---|---|
 | ohne Schnellpfad | 8 | 2 424 Ws | 6 218 Ws |
 | mit Schnellpfad (100 W) | 7 | 1 758 Ws | 5 415 Ws |
+
+**Totband nach Leistungsniveau.** Mit `deadband_percent` wächst das Totband
+linear mit dem Sollwert, der Grundwert bleibt Untergrenze. Bei hoher Leistung
+sind kleine Abweichungen relativ bedeutungslos, und jede Korrektur kostet ein
+Kommando:
+
+| Sollwert | hoch | runter |
+|---|---|---|
+| bis 100 W | 5 W | 5 W |
+| 200 W | 10 W | 5 W |
+| 400 W | 20 W | 5 W |
+| 600 W | 30 W | 5 W |
+
+Nach unten bleibt es beim Grundwert - sonst würde bei 400 W Sollwert eine
+Einspeisung von 15 W stillschweigend durchgehen.
 
 **Verstärkung je Richtung.** Nach unten ist 1,0 der exakte Wert: Der neue
 Sollwert ist `Sollwert + Netzwert − Reserve`, damit landet der Netzwert genau
@@ -506,6 +523,40 @@ Verspätete Antworten werden jetzt zusätzlich vor jeder neuen Anfrage aus dem
 Puffer geworfen.
 
 Der Preis: Ein Regelkommando kann sich um bis zu `request_delay` verzögern.
+
+## Wenn das Regelsignal ausfällt
+
+Zwei Ausfallarten werden erkannt:
+
+**Es kommt nichts mehr.** Bleiben Werte länger als `input_timeout` aus - HA
+neu gestartet, Automation deaktiviert, Broker weg - fällt der Sollwert auf 0 W.
+
+**Es kommt immer derselbe Wert.** Ein hängender Sensor, der weiter publiziert,
+ist heimtückischer: `input_timeout` greift nicht, und für die
+Einpendel-Erkennung sieht ein eingefrorener Wert wie ein perfekt ruhiges Signal
+aus. Die Bridge würde korrigieren, keine Reaktion sehen, nach
+`reaction_timeout` weitermachen, den Wert wieder für ruhig halten und erneut
+korrigieren - der Sollwert klettert alle 20 Sekunden ein Stück, bis er am
+Deckel steht und der Speicher unbemerkt ins Netz einspeist.
+
+Erkannt wird das an der Reaktionsphase: Wir befehlen eine deutliche Änderung
+und sehen keinerlei Bewegung. Einmal kann harmlos sein, `stuck_limit` Mal in
+Folge ist physikalisch unmöglich. Dann:
+
+```
+WARNING  Keine erkennbare Reaktion nach 15s (Bewegung 0.0 W, noetig 8.1 W,
+         befohlen 27 W) - Ausfall 3/3
+ERROR    Regelsignal reagiert nicht - 3 Kommandos ohne Bewegung, Messwert
+         steht bei 42.0 W. Sollwert wird auf 0 W gesetzt, die Regelung ruht
+         bis sich der Messwert wieder bewegt.
+ERROR    Communication established = FAIL
+```
+
+*Communication established* bleibt auf `FAIL`, auch wenn die Kommunikation mit
+dem Speicher selbst einwandfrei läuft - eine Automation auf
+`binary_sensor.<...>_system_comm_ok` schlägt damit an. Bewegt sich der Messwert
+wieder um mehr als `settle_tolerance`, nimmt die Regelung den Betrieb auf und
+der Zustand geht zurück auf `ON`.
 
 ## Abbruch der Initialisierung
 

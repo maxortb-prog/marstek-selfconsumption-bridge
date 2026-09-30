@@ -103,6 +103,11 @@ class Bridge:
         # Ruhezustand: eingependelt und nichts zu korrigieren. Nur von hier aus
         # darf eine grosse Abweichung ohne Wartezeit korrigiert werden.
         self._at_rest = False
+        # Sensorueberwachung: aufeinanderfolgende Kommandos ohne jede Reaktion.
+        self._reaction_failures = 0
+        self._stuck_value: float | None = None
+        # Solange gesetzt, bleibt "Communication established" auf FAIL.
+        self._regulation_fault: str | None = None
         self._last_quiet_log = 0.0
         self._last_input_log = 0.0
         self._pending_regulation: float | None = None
@@ -1114,6 +1119,10 @@ class Bridge:
         value = float(self._pending_regulation)
         self._pending_regulation = None
 
+        if self._stuck_value is not None:
+            self._check_stuck_recovery(value)
+            return
+
         if self._reaction_pending(value):
             return
 
@@ -1158,15 +1167,16 @@ class Bridge:
         self._compute_regulation_output(basis, gain=self._gain_for(basis))
         error = float(self._last_calc.get("error", 0.0))
 
-        if abs(error) < self.s.self_regulation_deadband:
+        totband = self._deadband_for(error)
+        if abs(error) < totband:
             if settled:
                 self._unsettled_since = None
                 self._at_rest = True
             self._log_quiet(
-                "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
+                "Abweichung %+.1f W liegt innerhalb des Totbands (%.0f W) - "
                 "kein Kommando",
                 error,
-                self.s.self_regulation_deadband,
+                totband,
             )
             return
 
@@ -1197,6 +1207,23 @@ class Bridge:
 
         self._send_regulation(basis, gain, grund)
 
+    def _deadband_for(self, error: float) -> float:
+        """Totband, abhaengig vom aktuellen Leistungsniveau.
+
+        Bei hoher Leistung sind kleine Abweichungen relativ bedeutungslos, und
+        jede Korrektur kostet ein Kommando. ``deadband_percent`` skaliert das
+        Totband deshalb linear mit dem Sollwert, mit dem Grundwert als
+        Untergrenze. Nach unten gilt immer der Grundwert - sonst wuerde bei
+        hohem Sollwert eine kleine Einspeisung stillschweigend toleriert.
+        """
+        grund = float(self.s.self_regulation_deadband)
+        anteil = self.s.self_regulation_deadband_percent
+        if anteil <= 0 or error < 0:
+            return grund
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        sollwert = abs(int(ctrl.get("regulation_output") or 0))
+        return max(grund, sollwert * anteil / 100.0)
+
     def _gain_for(self, value: float) -> float:
         """Verstaerkung je Richtung.
 
@@ -1209,6 +1236,57 @@ class Bridge:
         if value < self.s.self_regulation_band_low:
             return self.s.self_regulation_settle_gain_down
         return self.s.self_regulation_settle_gain
+
+    def _declare_stuck(self, value: float) -> None:
+        """Regelsignal als unbrauchbar einstufen und stillegen.
+
+        Mehrere deutliche Kommandos ohne jede Bewegung im Messwert kann es
+        physikalisch nicht geben: entweder haengt der Sensor (er publiziert
+        weiter, liefert aber immer denselben Wert - dann greift auch
+        ``input_timeout`` nicht), oder das Geraet fuehrt die Vorgaben nicht aus.
+        Beides ist gefaehrlich, weil die Regelung sonst den Sollwert Schritt
+        fuer Schritt bis zum Deckel hochtreibt und dabei unbemerkt einspeist.
+        """
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        self._stuck_value = value
+        self._reaction_failures = 0
+        grund = (
+            f"Regelsignal reagiert nicht - {self.s.self_regulation_stuck_limit} "
+            f"Kommandos ohne Bewegung, Messwert steht bei {value:.1f} W"
+        )
+        _LOGGER.error(
+            "\033[1;31m%s\033[0m. Sollwert wird auf 0 W gesetzt, die Regelung "
+            "ruht bis sich der Messwert wieder bewegt.",
+            grund,
+        )
+        self._regulation_fault = grund
+        ctrl["regulation_output"] = 0
+        self._publish_state(GRP_ENERGY_CONTROL)
+        if self._apply_mode(refresh=False):
+            self._mark_command_sent()
+        self._set_communication_state(COMM_FAIL, grund)
+
+    def _check_stuck_recovery(self, value: float) -> None:
+        """Wieder anlaufen, sobald sich der Messwert bewegt."""
+        if self._stuck_value is None:
+            return
+        if abs(value - self._stuck_value) <= self.s.self_regulation_settle_tolerance:
+            self._log_quiet(
+                "Regelsignal steht weiterhin bei %.1f W - Regelung ruht",
+                value,
+            )
+            return
+        _LOGGER.info(
+            "\033[1;32mRegelsignal bewegt sich wieder\033[0m (%.1f W statt "
+            "%.1f W) - Regelung nimmt den Betrieb auf",
+            value,
+            self._stuck_value,
+        )
+        self._stuck_value = None
+        self._regulation_fault = None
+        self._settle_samples.clear()
+        self._at_rest = False
+        self._set_communication(True)
 
     def _reaction_pending(self, value: float) -> bool:
         """True, solange die Wirkung des letzten Kommandos noch aussteht."""
@@ -1223,6 +1301,7 @@ class Bridge:
         wartet = time.monotonic() - self._reaction_since
 
         if bewegung >= noetig:
+            self._reaction_failures = 0
             _LOGGER.log(
                 CALC_LEVEL,
                 "Geraet reagiert: Messwert um %.1f W bewegt (erwartet %.0f W) "
@@ -1234,14 +1313,33 @@ class Bridge:
         elif self.s.self_regulation_reaction_timeout > 0 and (
             wartet >= self.s.self_regulation_reaction_timeout
         ):
-            _LOGGER.log(
-                CALC_LEVEL,
+            # Nur zaehlen, wenn die befohlene Aenderung deutlich ueber dem
+            # Rauschen lag - sonst schlaegt der Zaehler bei jeder
+            # Kleinstkorrektur an, die sich naturgemaess nicht zeigt.
+            eindeutig = abs(self._reaction_expected) >= 3 * max(
+                1.0, float(self.s.self_regulation_settle_tolerance)
+            )
+            if eindeutig:
+                self._reaction_failures += 1
+            _LOGGER.warning(
                 "Keine erkennbare Reaktion nach %.0fs (Bewegung %.1f W, noetig "
-                "%.1f W) - Einpendeln beginnt trotzdem",
+                "%.1f W, befohlen %.0f W)%s",
                 wartet,
                 bewegung,
                 noetig,
+                abs(self._reaction_expected),
+                f" - Ausfall {self._reaction_failures}/"
+                f"{self.s.self_regulation_stuck_limit}"
+                if eindeutig and self.s.self_regulation_stuck_limit > 0
+                else "",
             )
+            if (
+                eindeutig
+                and self.s.self_regulation_stuck_limit > 0
+                and self._reaction_failures >= self.s.self_regulation_stuck_limit
+            ):
+                self._declare_stuck(value)
+                return True
         else:
             self._log_quiet(
                 "Warte auf Reaktion des Geraets: Messwert um %.1f W bewegt, "
@@ -1662,6 +1760,11 @@ class Bridge:
                    wieder ansprechbar wird.
         ``FAIL`` - Geraet antwortet nicht mehr, der Watchdog hat ausgeloest.
         """
+        # Solange das Regelsignal als unbrauchbar gilt, bleibt FAIL stehen -
+        # auch wenn die Geraetekommunikation selbst einwandfrei laeuft.
+        if state == COMM_OK and self._regulation_fault:
+            state = COMM_FAIL
+            reason = self._regulation_fault
         if self.states[GRP_SYSTEM].get("communication") != state:
             if state == COMM_OK:
                 _LOGGER.info("\033[1;32mCommunication established = ON\033[0m")

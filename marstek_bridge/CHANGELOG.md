@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.35 - 2026-09-30
+
+- **Erkennung eines haengenden Regelsignals.** Publiziert ein Sensor weiter,
+  liefert aber immer denselben Wert, greift `input_timeout` nicht und die
+  Einpendel-Erkennung haelt den eingefrorenen Wert fuer ein perfekt ruhiges
+  Signal - der Sollwert klettert dann Schritt fuer Schritt bis zum Deckel und
+  speist unbemerkt ins Netz ein. Neu `self_regulation_stuck_limit` (Standard
+  3): So viele Kommandos in Folge ohne jede Bewegung im Messwert setzen den
+  Sollwert auf 0 W, schalten *Communication established* auf `FAIL` und legen
+  die Regelung still, bis sich der Messwert wieder bewegt.
+- **Totband nach Leistungsniveau.** Neu `self_regulation_deadband_percent`
+  (Standard 0 = aus): skaliert das Totband linear mit dem Sollwert, der
+  Grundwert bleibt Untergrenze. Gilt nur beim Hochregeln - nach unten bleibt
+  der Grundwert, sonst wuerde bei hohem Sollwert eine kleine Einspeisung
+  stillschweigend toleriert.
+- Drei nicht verwendete Optionen entfernt, die versehentlich in Schema und
+  Defaults gelandet waren: `self_regulation_reserve_percent`,
+  `self_regulation_stall_limit` und ein doppeltes
+  `self_regulation_deadband_percent`.
+
 ## 0.0.34 - 2026-09-30
 
 - **Schnellpfad bei Lastwechseln.** Neu `self_regulation_fast_threshold`

@@ -139,6 +139,21 @@ configuration:
       cannot force permanent export. 0 = off. Choose the value so that the
       clamp reads roughly the reserve and not 0 W - otherwise the lower bound
       binds on every return to base load and costs an extra control cycle.
+      self_regulation_deadband_percent: scales the deadband linearly with the
+      setpoint, with the base value as the lower bound. At high power small
+      deviations matter little while every correction costs a command. 5 per
+      cent gives 5 W up to a setpoint of 100 W, then 20 W at 400 W and 30 W at
+      600 W. Applies to upward steps only - downward the base value stays,
+      otherwise a small export would be silently tolerated at a high setpoint.
+      0 = off.
+      self_regulation_stuck_limit: this many commands in a row without any
+      movement in the measurement before the control signal counts as
+      unusable. The setpoint then falls to 0 W, Communication established
+      switches to FAIL and the controller rests until the measurement moves
+      again. This catches a sensor that is stuck but keeps publishing - then
+      input_timeout does not trigger and the controller would drive the
+      setpoint up to the cap. Only counted when the commanded change was
+      clearly above the noise. 0 = off.
       self_regulation_band_low: lower edge of the hold band. Between this edge
       and the reserve nothing is regulated at all - a grid import below the
       reserve is better than the reserve itself. 0 = every export is corrected

@@ -144,6 +144,21 @@ configuration:
       0 = aus. Setze den Wert so, dass die Messklemme dabei etwa die Reserve
       anzeigt und nicht 0 W - sonst bindet die Untergrenze bei jeder Rueckkehr
       zur Grundlast und kostet einen zusaetzlichen Regelzyklus.
+      self_regulation_deadband_percent: skaliert das Totband linear mit dem
+      Sollwert, mit dem Grundwert als Untergrenze. Bei hoher Leistung sind
+      kleine Abweichungen relativ bedeutungslos und jede Korrektur kostet ein
+      Kommando. 5 Prozent ergeben 5 W bis 100 W Sollwert, dann 20 W bei 400 W
+      und 30 W bei 600 W. Gilt nur beim Hochregeln - nach unten bleibt der
+      Grundwert, sonst wuerde bei hohem Sollwert eine kleine Einspeisung
+      stillschweigend toleriert. 0 = aus.
+      self_regulation_stuck_limit: so viele Kommandos in Folge ohne jede
+      Bewegung im Messwert, bis das Regelsignal als unbrauchbar gilt. Dann
+      faellt der Sollwert auf 0 W, Communication established wechselt auf FAIL
+      und die Regelung ruht, bis sich der Messwert wieder bewegt. Faengt den
+      Fall ab, dass ein Sensor haengt, aber weiter publiziert - dann greift
+      input_timeout nicht und die Regelung wuerde den Sollwert bis zum Deckel
+      hochtreiben. Gezaehlt wird nur, wenn die befohlene Aenderung deutlich
+      ueber dem Rauschen lag. 0 = aus.
       self_regulation_band_low: untere Kante des Haltebands. Zwischen dieser
       Kante und der Reserve wird gar nicht geregelt - ein Netzbezug unterhalb
       der Reserve ist besser als die Reserve selbst. 0 = jede Einspeisung wird
