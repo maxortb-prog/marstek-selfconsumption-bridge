@@ -85,6 +85,7 @@ class Bridge:
         self._last_passive_push = 0.0
         self._last_regulation_input: float | None = None
         self._last_target_saturated = False
+        self._last_floor_applied = False
         self._last_in_band = False
         self._last_calc: dict[str, float] = {}
         # Einpendel-Strategie: Messwerte seit dem letzten Kommando und der
@@ -94,6 +95,14 @@ class Bridge:
         self._settle_samples: list[float] = []
         # Seit wann liegt eine Abweichung an, ohne dass das Signal ruhig ist?
         self._unsettled_since: float | None = None
+        # Warten auf die Reaktion des Geraets nach einem Kommando:
+        # Messwert davor, erwartete Aenderung, Startzeitpunkt.
+        self._reaction_ref: float | None = None
+        self._reaction_expected = 0.0
+        self._reaction_since = 0.0
+        # Ruhezustand: eingependelt und nichts zu korrigieren. Nur von hier aus
+        # darf eine grosse Abweichung ohne Wartezeit korrigiert werden.
+        self._at_rest = False
         self._last_quiet_log = 0.0
         self._last_input_log = 0.0
         self._pending_regulation: float | None = None
@@ -999,6 +1008,8 @@ class Bridge:
             return
         if self._last_in_band:
             grund = "im Halteband"
+        elif self._last_floor_applied:
+            grund = f"auf die Grundlast {self.s.self_regulation_base_load} W begrenzt"
         elif self._last_target_saturated:
             grund = "am Anschlag begrenzt"
         else:
@@ -1049,6 +1060,18 @@ class Bridge:
         raw = base + step
         out = int(max(0, min(cap, round(raw))))
         self._last_target_saturated = raw > cap or raw < 0
+
+        # Untergrenze: unter die Grundlast der Phase soll der Sollwert nicht
+        # fallen - so viel wird ohnehin verbraucht. Dazu ein Ventil: sie bremst
+        # nur den Schritt VON oben. Wird danach immer noch Einspeisung
+        # gemessen, steht der Sollwert bereits auf der Grundlast und der
+        # naechste Schritt darf darunter. Sonst wuerde eine zu hoch
+        # eingestellte Grundlast dauerhaft Einspeisung erzwingen.
+        floor = self.s.self_regulation_base_load
+        self._last_floor_applied = False
+        if 0 < floor < base and out < floor:
+            out = int(min(cap, floor))
+            self._last_floor_applied = True
         self._last_calc = {
             "value": value,
             "error": error,
@@ -1070,41 +1093,75 @@ class Bridge:
         self._flush_settle()
 
     def _flush_settle(self) -> None:
-        """Nur auf ein ruhiges Signal korrigieren.
+        """Nur auf ein ruhiges, bestaetigtes Signal korrigieren.
 
-        Das Geraet braucht nach einem Kommando rund 10 Sekunden Totzeit und
-        weitere 10 bis 15 Sekunden Rampe. Genauso wenig aussagekraeftig ist der
-        erste Messwert nach einem Lastwechsel - er liegt meist mitten in der
-        Aenderung. In beiden Faellen waere eine Korrektur eine Korrektur auf
-        einen Zwischenstand, die sofort nachgebessert werden muss.
+        Nach einem Kommando durchlaeuft die Bridge zwei Phasen:
 
-        Deshalb laeuft ein Fenster der letzten ``settle_samples`` Messwerte
-        durchgehend mit. Korrigiert wird erst, wenn diese Werte innerhalb von
-        ``settle_tolerance`` beieinander liegen - dann steht das System, und
-        eine einzige Korrektur trifft meist. Nach jedem Kommando wird das
-        Fenster geleert.
+        1. **Reaktion abwarten.** Das Geraet braucht rund 10 Sekunden, bis es
+           ueberhaupt losfaehrt. In dieser Zeit steht der Messwert still - ein
+           kurzes Stichprobenfenster wuerde das faelschlich als "eingependelt"
+           werten und auf einen Zustand korrigieren, den das Geraet noch gar
+           nicht erreicht hat. Deshalb wird gewartet, bis sich der Messwert um
+           einen erkennbaren Teil der befohlenen Aenderung bewegt hat.
+        2. **Ruhe abwarten.** Erst danach zaehlt das Fenster der letzten
+           ``settle_samples`` Messwerte. Liegen sie innerhalb von
+           ``settle_tolerance``, steht das System.
 
-        Das gilt fuer beide Richtungen. Auch eine Einspeisung wird erst nach dem
-        Einpendeln korrigiert: Waehrend des Einschwingens rutscht der Netzwert
-        praktisch immer kurz ins Negative, und sofort dagegenzuregeln hiesse,
-        auf ein bereits vorbeigezogenes Ereignis zu reagieren.
+        Das gilt fuer beide Richtungen - auch eine Einspeisung wird erst nach
+        dem Einpendeln korrigiert, weil der Netzwert waehrend jedes
+        Einschwingvorgangs ohnehin kurz ins Negative rutscht.
         """
         value = float(self._pending_regulation)
         self._pending_regulation = None
+
+        if self._reaction_pending(value):
+            return
+
+        # Schnellpfad: aus dem Ruhezustand heraus ist eine grosse Abweichung
+        # zwangslaeufig ein echtes Lastereignis von aussen - Rauschen sieht so
+        # nicht aus. Darauf muss nicht erst ein Fenster warten. Waehrend das
+        # Geraet auf eine eigene Korrektur hochfaehrt gilt das ausdruecklich
+        # nicht, dort ist die Abweichung genauso gross und wuerde zu einer
+        # zweiten Korrektur auf denselben Vorgang fuehren.
+        schwelle = self.s.self_regulation_fast_threshold
+        if self._at_rest and schwelle > 0:
+            self._compute_regulation_output(value, gain=self._gain_for(value))
+            fehler = float(self._last_calc.get("error", 0.0))
+            if abs(fehler) >= schwelle:
+                _LOGGER.log(
+                    CALC_LEVEL,
+                    "Lastwechsel erkannt: Abweichung %+.1f W ueberschreitet %s W "
+                    "- Korrektur ohne Wartezeit",
+                    fehler,
+                    schwelle,
+                )
+                self._send_regulation(
+                    value,
+                    self._gain_for(value),
+                    f"Lastwechsel {fehler:+.0f} W aus dem Ruhezustand",
+                )
+                return
 
         samples = self._settle_samples
         samples.append(value)
         needed = self.s.self_regulation_settle_samples
         del samples[:-needed]
         span = max(samples) - min(samples)
-        settled = len(samples) >= needed and span <= self.s.self_regulation_settle_tolerance
+        settled = (
+            len(samples) >= needed and span <= self.s.self_regulation_settle_tolerance
+        )
 
-        self._compute_regulation_output(value, gain=self.s.self_regulation_settle_gain)
+        # Ist das Signal ruhig, ist der Mittelwert des Fensters der bessere
+        # Schaetzer als der zufaellig letzte Einzelwert.
+        basis = sum(samples) / len(samples) if settled else value
+
+        self._compute_regulation_output(basis, gain=self._gain_for(basis))
         error = float(self._last_calc.get("error", 0.0))
 
         if abs(error) < self.s.self_regulation_deadband:
             if settled:
                 self._unsettled_since = None
+                self._at_rest = True
             self._log_quiet(
                 "Abweichung %+.1f W liegt innerhalb des Totbands (%s W) - "
                 "kein Kommando",
@@ -1114,8 +1171,8 @@ class Bridge:
             return
 
         if settled:
-            gain = self.s.self_regulation_settle_gain
-            grund = f"eingependelt, Spanne {span:.0f} W"
+            gain = self._gain_for(basis)
+            grund = f"eingependelt, Spanne {span:.1f} W, Mittel {basis:.1f} W"
             self._unsettled_since = None
         else:
             if self._unsettled_since is None:
@@ -1124,7 +1181,7 @@ class Bridge:
             max_wait = self.s.self_regulation_settle_max_wait
             if max_wait > 0 and waited >= max_wait:
                 gain = self.s.self_regulation_timeout_gain
-                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.0f} W)"
+                grund = f"seit {waited:.0f}s nicht eingependelt (Spanne {span:.1f} W)"
             else:
                 self._log_quiet(
                     "Warte auf Einpendeln: %s/%s Werte, Spanne %.1f W "
@@ -1138,7 +1195,67 @@ class Bridge:
                 )
                 return
 
-        self._send_regulation(value, gain, grund)
+        self._send_regulation(basis, gain, grund)
+
+    def _gain_for(self, value: float) -> float:
+        """Verstaerkung je Richtung.
+
+        Nach unten ist 1,0 der exakte Wert: der neue Sollwert ist
+        ``Sollwert + Netzwert - Reserve``, damit landet der Netzwert genau auf
+        der Reserve. Ein Fehler dabei faellt auf die Bezugsseite, ist also
+        harmlos. Nach oben bleibt eine Marge, weil ein Ueberschiessen dort
+        Einspeisung bedeutet.
+        """
+        if value < self.s.self_regulation_band_low:
+            return self.s.self_regulation_settle_gain_down
+        return self.s.self_regulation_settle_gain
+
+    def _reaction_pending(self, value: float) -> bool:
+        """True, solange die Wirkung des letzten Kommandos noch aussteht."""
+        if self._reaction_ref is None:
+            return False
+
+        bewegung = abs(value - self._reaction_ref)
+        noetig = max(
+            float(self.s.self_regulation_settle_tolerance),
+            abs(self._reaction_expected) * 0.3,
+        )
+        wartet = time.monotonic() - self._reaction_since
+
+        if bewegung >= noetig:
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Geraet reagiert: Messwert um %.1f W bewegt (erwartet %.0f W) "
+                "nach %.0fs - Einpendeln beginnt",
+                bewegung,
+                abs(self._reaction_expected),
+                wartet,
+            )
+        elif self.s.self_regulation_reaction_timeout > 0 and (
+            wartet >= self.s.self_regulation_reaction_timeout
+        ):
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Keine erkennbare Reaktion nach %.0fs (Bewegung %.1f W, noetig "
+                "%.1f W) - Einpendeln beginnt trotzdem",
+                wartet,
+                bewegung,
+                noetig,
+            )
+        else:
+            self._log_quiet(
+                "Warte auf Reaktion des Geraets: Messwert um %.1f W bewegt, "
+                "noetig %.1f W, seit %.0fs",
+                bewegung,
+                noetig,
+                wartet,
+            )
+            return True
+
+        self._reaction_ref = None
+        self._settle_samples.clear()
+        self._unsettled_since = None
+        return False
 
     def _log_quiet(self, message: str, *args: Any) -> None:
         """Wiederkehrende "nichts passiert"-Meldungen ausduennen.
@@ -1152,10 +1269,24 @@ class Bridge:
         self._last_quiet_log = now
         _LOGGER.log(CALC_LEVEL, message, *args)
 
-    def _mark_command_sent(self) -> None:
-        """Nach jedem gesendeten Sollwert beginnt ein neuer Einschwingvorgang."""
+    def _mark_command_sent(
+        self, delta: float = 0.0, reference: float | None = None
+    ) -> None:
+        """Nach jedem gesendeten Sollwert beginnt ein neuer Einschwingvorgang.
+
+        ``delta`` ist die befohlene Aenderung des Sollwerts, ``reference`` der
+        Messwert davor - daraus ergibt sich, welche Bewegung im Netzwert zu
+        erwarten ist (sie faellt gegenlaeufig aus).
+        """
         self._settle_samples.clear()
         self._unsettled_since = None
+        self._at_rest = False
+        if reference is not None and delta:
+            self._reaction_ref = reference
+            self._reaction_expected = -delta
+            self._reaction_since = time.monotonic()
+        else:
+            self._reaction_ref = None
 
     def _send_regulation(self, value: float, gain: float, grund: str) -> None:
         """Einen Korrekturschritt berechnen und senden."""
@@ -1179,7 +1310,10 @@ class Bridge:
         )
         self._publish_state(GRP_ENERGY_CONTROL)
         if self._apply_mode(refresh=False):
-            self._mark_command_sent()
+            self._mark_command_sent(
+                delta=float(out - (last if last is not None else 0)),
+                reference=value,
+            )
         else:
             _LOGGER.warning(
                 "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W, "

@@ -72,9 +72,13 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_settle_tolerance": 10,
         "self_regulation_settle_max_wait": 60,
         "self_regulation_settle_gain": 0.8,
+        "self_regulation_settle_gain_down": 1.0,
+        "self_regulation_reaction_timeout": 15.0,
+        "self_regulation_fast_threshold": 100,
         "self_regulation_timeout_gain": 0.5,
         "self_regulation_reserve": 12,
         "self_regulation_band_low": 0,
+        "self_regulation_base_load": 0,
         "self_regulation_deadband": 10,
         "self_regulation_input_timeout": 60,
     },
@@ -157,9 +161,13 @@ class Settings:
     self_regulation_settle_tolerance: int = 10
     self_regulation_settle_max_wait: int = 60
     self_regulation_settle_gain: float = 0.8
+    self_regulation_settle_gain_down: float = 1.0
+    self_regulation_reaction_timeout: float = 15.0
+    self_regulation_fast_threshold: int = 100
     self_regulation_timeout_gain: float = 0.5
     self_regulation_reserve: int = 12
     self_regulation_band_low: int = 0
+    self_regulation_base_load: int = 0
     self_regulation_deadband: int = 10
     self_regulation_input_timeout: int = 60
 

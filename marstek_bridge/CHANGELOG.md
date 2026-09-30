@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.0.34 - 2026-09-30
+
+- **Schnellpfad bei Lastwechseln.** Neu `self_regulation_fast_threshold`
+  (Standard 100 W): Eine so grosse Abweichung ist zwangslaeufig ein echtes
+  Lastereignis und wird aus dem Ruhezustand heraus sofort korrigiert, ohne auf
+  das Einpendeln zu warten. Waehrend das Geraet auf eine eigene Korrektur
+  hochfaehrt gilt der Schnellpfad nicht - dort waere die Abweichung genauso
+  gross und wuerde eine zweite Korrektur auf denselben Vorgang ausloesen.
+- Im Kuehlschrank-Szenario (130 W fuer zwei Minuten) sinkt die eingespeiste
+  Energie dadurch um gut ein Viertel und der Netzbezug um ein Achtel.
+
+## 0.0.33 - 2026-09-30
+
+- **Getrennte Verstaerkung je Richtung.** Neu `self_regulation_settle_gain_down`
+  (Standard 1.0). Nach unten ist das der exakte Wert: der neue Sollwert ist
+  `Sollwert + Netzwert - Reserve`, damit landet der Netzwert genau auf der
+  Reserve, und ein Fehler faellt auf die harmlose Bezugsseite. Ein Lastabfall
+  von 500 auf 80 W wird damit in einem Kommando statt in drei ausgeregelt.
+- **Auf die Reaktion des Geraets warten.** Neu
+  `self_regulation_reaction_timeout` (Standard 15 s). Nach einem Kommando
+  wartet die Bridge, bis sich der Messwert um mindestens 30 % der befohlenen
+  Aenderung bewegt hat, bevor das Stichprobenfenster zaehlt. In der Totzeit
+  steht der Messwert still - ein kurzes Fenster hat das bisher faelschlich als
+  eingependelt gewertet. Dadurch reichen jetzt 6 bis 8 Stichproben statt 12,
+  was auch das Risiko senkt, dass mitten im Fenster ein Geraet einschaltet.
+- **Korrektur auf den Mittelwert** des ruhigen Fensters statt auf den zufaellig
+  letzten Einzelwert.
+- `self_regulation_base_load` ist jetzt eine **Untergrenze** statt eines
+  Ruecksprungziels. Wird danach weiter Einspeisung gemessen, darf der naechste
+  Schritt darunter - eine zu hoch eingestellte Grundlast kann keine dauerhafte
+  Einspeisung erzwingen.
+- `self_regulation_drop_threshold` entfaellt; die Verstaerkung nach unten
+  skaliert sich selbst und braucht keine Schwelle.
+
+## 0.0.32 - 2026-09-29
+
+- Neue Option `self_regulation_base_load`: Bei starker Einspeisung faellt der
+  Sollwert direkt auf die Grundlast der Phase zurueck, statt sich proportional
+  heranzutasten. Das beendet die Einspeisung sofort; danach arbeitet sich die
+  Regelung wieder hoch. In der Simulation eines Lastabfalls von 500 auf 80 W
+  halbiert das die eingespeiste Energie, zum Preis von etwas Netzbezug.
+- Neue Option `self_regulation_drop_threshold` (Standard 100 W): erst ab dieser
+  Einspeisung greift der Ruecksprung. Ohne Schwelle wuerde schon eine
+  Einspeisespitze von wenigen Watt den Sollwert grundlos einbrechen lassen -
+  in der Simulation kostete das 27 kWs Netzbezug, um 0,7 kWs Einspeisung zu
+  sparen. `0` = immer zurueckspringen.
+
 ## 0.0.31 - 2026-09-29
 
 - **Die Bridge korrigiert jetzt grundsaetzlich nur auf ein ruhiges Signal.**

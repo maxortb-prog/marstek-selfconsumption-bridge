@@ -91,11 +91,15 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_settle_samples` | `3` | So viele Messwerte in Folge müssen dicht beieinander liegen. |
 | `self_regulation_settle_tolerance` | `10` | Erlaubte Spanne dieser Messwerte in Watt. |
 | `self_regulation_settle_max_wait` | `60` | Pendelt es sich nicht ein, wird nach dieser Zeit trotzdem korrigiert. `0` = unbegrenzt warten. |
-| `self_regulation_settle_gain` | `0.8` | Anteil der Abweichung nach dem Einpendeln. |
+| `self_regulation_settle_gain` | `0.8` | Anteil der Abweichung beim Hochregeln. |
+| `self_regulation_settle_gain_down` | `1.0` | Anteil beim Runterregeln - 1,0 ist der exakte Wert. |
+| `self_regulation_fast_threshold` | `100` | Abweichung, ab der aus dem Ruhezustand ohne Wartezeit korrigiert wird. `0` = aus. |
+| `self_regulation_reaction_timeout` | `15.0` | Wartezeit auf die Reaktion des Geräts, bevor das Einpendeln beginnt. `0` = nicht warten. |
 | `self_regulation_timeout_gain` | `0.5` | Anteil nach Ablauf von `settle_max_wait`. |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
+| `self_regulation_base_load` | `0` | Grundlast der Phase als **Untergrenze** für den Sollwert. `0` = aus. |
 | `self_regulation_deadband` | `10` | Abweichung des **Netzwerts** ab der Reserve, unter der nicht geregelt wird (nur beim Hochregeln). |
 | `self_regulation_input_timeout` | `60` | Sekunden ohne Wert bis Rückfall auf 0 W, `0` = aus. |
 
@@ -137,24 +141,96 @@ er liegt meist mitten in der Änderung. Eine Korrektur darauf trifft einen
 Zwischenstand und muss sofort nachgebessert werden; auch daraus entsteht
 Schwingen.
 
-Die Bridge korrigiert deshalb grundsätzlich nur auf ein **ruhiges Signal**:
+Die Bridge korrigiert deshalb grundsätzlich nur auf ein **ruhiges, bestätigtes
+Signal**, in zwei Phasen:
 
-1. Ein Fenster der letzten `settle_samples` Messwerte läuft durchgehend mit.
-2. Liegen diese Werte innerhalb von `settle_tolerance` beieinander, steht das
-   System - erst dann wird korrigiert, um den Anteil `settle_gain` der
-   Abweichung (Standard 80 %).
-3. Nach jedem Kommando wird das Fenster geleert, es beginnt von vorn.
+1. **Reaktion abwarten.** Während der Totzeit steht der Messwert still. Ein
+   kurzes Stichprobenfenster würde das fälschlich als „eingependelt" werten und
+   auf einen Zustand korrigieren, den das Gerät noch gar nicht erreicht hat.
+   Die Bridge merkt sich deshalb den Messwert vor dem Kommando und die
+   befohlene Änderung und wartet, bis sich der Messwert um mindestens 30 % der
+   erwarteten Bewegung geändert hat. Bleibt sie aus - etwa weil die Korrektur
+   kleiner war als das Rauschen - geht es nach `reaction_timeout` trotzdem
+   weiter.
+2. **Ruhe abwarten.** Erst jetzt zählt das Fenster der letzten
+   `settle_samples` Messwerte. Liegen sie innerhalb von `settle_tolerance`,
+   steht das System und es wird korrigiert - auf den **Mittelwert** des
+   Fensters, nicht auf den zufällig letzten Einzelwert.
+3. Nach jedem Kommando beginnt beides von vorn.
 4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
    trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
+
+Weil die Reaktionsphase die Totzeit abdeckt, darf `settle_samples` kurz sein -
+6 bis 8 Werte reichen. Das verkürzt nicht nur die Regelung, es senkt auch das
+Risiko, dass mitten im Fenster ein Gerät einschaltet und die Messung verfälscht.
+
+**Schnellpfad bei Lastwechseln.** Eine Abweichung von mehr als
+`fast_threshold` ist zwangsläufig ein echtes Lastereignis - so groß wird
+Rauschen nicht. Aus dem **Ruhezustand** heraus wird darauf sofort korrigiert,
+ohne erst ein Fenster zu füllen. Ruhezustand heißt: Das Fenster war
+eingependelt und es gab nichts zu korrigieren.
+
+Während das Gerät auf eine eigene Korrektur hochfährt, gilt der Schnellpfad
+ausdrücklich **nicht**. Dort durchläuft der Messwert dieselbe Strecke und wäre
+genauso weit vom Ziel entfernt - eine Korrektur mitten im Einschwingen würde
+genau das Schwingen zurückholen, das die Einpendel-Erkennung beseitigt.
+
+Simulation, Kühlschrank mit 130 W schaltet ein und nach zwei Minuten wieder
+aus, Grundlast 50 W:
+
+| | Kommandos | eingespeist | bezogen |
+|---|---|---|---|
+| ohne Schnellpfad | 8 | 2 424 Ws | 6 218 Ws |
+| mit Schnellpfad (100 W) | 7 | 1 758 Ws | 5 415 Ws |
+
+**Verstärkung je Richtung.** Nach unten ist 1,0 der exakte Wert: Der neue
+Sollwert ist `Sollwert + Netzwert − Reserve`, damit landet der Netzwert genau
+auf der Reserve. Ein Fehler fällt dabei auf die Bezugsseite und ist harmlos.
+Nach oben bleibt mit `settle_gain` eine Marge, weil ein Überschießen dort
+Einspeisung bedeutet.
+
+**Untergrenze Grundlast.** `base_load` ist die Leistung, die auf dieser Phase
+ohnehin verbraucht wird. Ein Abwärtsschritt stoppt dort, statt bis auf 0 W
+durchzufallen - der anschließende Wiederaufstieg wird dadurch kürzer. Das
+Ventil dazu: Die Grenze bremst nur den Schritt *von oben*. Wird danach immer
+noch Einspeisung gemessen, steht der Sollwert bereits auf der Grundlast und der
+nächste Schritt darf darunter. Eine zu hoch eingestellte Grundlast kann so
+keine dauerhafte Einspeisung erzwingen, sie kostet nur einen Zyklus.
+
+**Den Wert richtig ansetzen:** Sende testweise verschiedene Sollwerte im
+Passive-Modus, wenn sonst nichts läuft, und nimm den, bei dem die Messklemme
+etwa die **Reserve** anzeigt - nicht 0 W. Zeigt sie 0, liegt der Arbeitspunkt
+genau an der unteren Bandkante, das Rauschen kippt ihn ständig ins Negative,
+und die Untergrenze bindet bei jeder Rückkehr zur Grundlast. Bei 50 W
+Grundverbrauch und 8 W Reserve ist also ein Wert um 42 richtig, nicht 50.
 
 Ob die Unruhe von der eigenen Korrektur oder von einem Lastwechsel stammt,
 spielt dabei keine Rolle - behandelt wird beides gleich.
 
+Simulation mit 6 Stichproben, Toleranz 8 W, Grundlast 40 W, ±3 W Rauschen:
+
+| Szenario | Kommandos | eingespeist | bezogen |
+|---|---|---|---|
+| Lastabfall 500 → 80 W | 1 | 9 161 Ws | 1 347 Ws |
+| Lastanstieg 60 → 400 W | 3 | 0 Ws | 11 542 Ws |
+| Lastabfall 500 → 20 W (unter der Grundlast) | 3 | 11 212 Ws | 2 205 Ws |
+
+Der Lastabfall wird in einem einzigen Kommando ausgeregelt. Im dritten Fall
+greift das Ventil: Der erste Schritt stoppt bei 40 W, der zweite geht auf 8 W.
+
 **Taktung der Quelle:** Je feiner der Eingang, desto genauer die Erkennung.
 Bewährt hat sich ein Messwert pro Sekunde mit `settle_samples` zwischen 10 und
-15 und einer Toleranz von 3 W - dann gilt das System nach 10 bis 15 Sekunden
-Ruhe als eingeschwungen. Mit einem 5-Sekunden-Mittel und 3 Stichproben wird die
-Erkennung träge und ungenau, weil der Mittelwert die Ruhe selbst verschleift.
+15 - dann gilt das System nach 10 bis 15 Sekunden Ruhe als eingeschwungen. Mit
+einem 5-Sekunden-Mittel und 3 Stichproben wird die Erkennung träge und ungenau,
+weil der Mittelwert die Ruhe selbst verschleift.
+
+**`settle_tolerance` muss größer sein als das Rauschen des Sensors.** Sonst gilt
+das Signal nie als eingependelt und jede Korrektur läuft über den Timeout-Pfad
+mit der kleineren Verstärkung - erkennbar im Log an „seit Xs nicht
+eingependelt". Bei 12 Stichproben ergibt ein Rauschen von ±3 W eine typische
+Spanne von 5 W, ±5 W ergeben rund 9 W. In der Simulation kostete eine zu enge
+Toleranz von 3 W gegenüber 8 W mehr als das Doppelte an eingespeister Energie,
+weil jede Korrektur 40 Sekunden zu spät kam.
 
 Jede Sollwertänderung leert das Fenster - auch der Wechsel nach *Passive* über
 den Apply-Button, denn danach schwingt das Gerät ebenso ein. Der Keepalive tut

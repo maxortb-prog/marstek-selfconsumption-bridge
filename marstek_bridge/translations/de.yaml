@@ -101,19 +101,49 @@ configuration:
       ob die Unruhe von der eigenen Korrektur oder von einem Lastwechsel
       stammt. Bewaehrt: ein Messwert pro Sekunde mit 10 bis 15 Stichproben.
       self_regulation_settle_tolerance: erlaubte Spanne dieser Messwerte in
+      Watt. Sie muss groesser sein als das Rauschen des Sensors, sonst gilt das
+      Signal nie als eingependelt und jede Korrektur laeuft ueber den
+      Timeout-Pfad mit der kleineren Verstaerkung. Bei 12 Stichproben und einem
+      Rauschen von +-3 W betraegt die typische Spanne rund 5 W.
+      self_regulation_settle_tolerance: erlaubte Spanne dieser Messwerte in
       Watt. Bei unruhiger Last groesser waehlen, sonst wartet der Regler
       unnoetig lange.
       self_regulation_settle_max_wait: pendelt sich das Signal so lange nicht
       ein, wird trotzdem korrigiert, dann aber mit timeout_gain. 0 = unbegrenzt
       warten, dann wird nur noch Einspeisung korrigiert.
-      self_regulation_settle_gain: Anteil der Abweichung, der nach dem
-      Einpendeln ausgeglichen wird. 0.8 laesst etwas Sicherheitsmarge gegen
-      Ueberschwingen.
+      self_regulation_settle_gain: Anteil der Abweichung, der beim Hochregeln
+      nach dem Einpendeln ausgeglichen wird. 0.8 laesst Sicherheitsmarge, weil
+      ein Ueberschiessen hier Einspeisung bedeutet.
+      self_regulation_settle_gain_down: dasselbe fuers Runterregeln. 1.0 ist
+      der exakte Wert - der neue Sollwert ist Sollwert plus Netzwert minus
+      Reserve, damit landet der Netzwert genau auf der Reserve. Ein Fehler
+      faellt hier auf die Bezugsseite und ist harmlos.
+      self_regulation_fast_threshold: Abweichung in Watt, ab der aus dem
+      Ruhezustand heraus sofort korrigiert wird, ohne auf das Einpendeln zu
+      warten. So gross wird Rauschen nicht - das ist zwangslaeufig ein echtes
+      Lastereignis, etwa ein Kuehlschrank, der ein- oder ausschaltet. Waehrend
+      das Geraet auf eine eigene Korrektur hochfaehrt gilt der Schnellpfad
+      nicht, dort waere die Abweichung genauso gross und wuerde eine zweite
+      Korrektur auf denselben Vorgang ausloesen. 0 = aus.
+      self_regulation_reaction_timeout: nach einem Kommando wird zuerst
+      gewartet, bis sich der Messwert ueberhaupt bewegt - in der Totzeit des
+      Geraets steht er still und ein kurzes Stichprobenfenster wuerde das
+      faelschlich als eingependelt werten. Bleibt die Bewegung aus (etwa weil
+      die Korrektur kleiner war als das Rauschen), geht es nach dieser Zeit
+      trotzdem weiter. 0 = nicht auf die Reaktion warten.
       self_regulation_timeout_gain: Anteil, der nach Ablauf von
       settle_max_wait ausgeglichen wird - kleiner, weil die Messung dann nicht
       verlaesslich ist.
       self_regulation_reserve: obere Kante des Haltebands in Watt und Ziel
       jeder Korrektur. Uebliche Werte 10-15 W.
+      self_regulation_base_load: Grundlast in Watt, die auf dieser Phase
+      ohnehin anliegt - als Untergrenze fuer den Sollwert. Ein Abwaertsschritt
+      stoppt dort, statt bis auf 0 W durchzufallen. Wird danach immer noch
+      Einspeisung gemessen, darf der naechste Schritt darunter, damit eine zu
+      hoch eingestellte Grundlast keine dauerhafte Einspeisung erzwingt.
+      0 = aus. Setze den Wert so, dass die Messklemme dabei etwa die Reserve
+      anzeigt und nicht 0 W - sonst bindet die Untergrenze bei jeder Rueckkehr
+      zur Grundlast und kostet einen zusaetzlichen Regelzyklus.
       self_regulation_band_low: untere Kante des Haltebands. Zwischen dieser
       Kante und der Reserve wird gar nicht geregelt - ein Netzbezug unterhalb
       der Reserve ist besser als die Reserve selbst. 0 = jede Einspeisung wird

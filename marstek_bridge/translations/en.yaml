@@ -97,18 +97,48 @@ configuration:
       comes from the bridge's own correction or from a load change. Proven
       setup: one sample per second with 10 to 15 samples.
       self_regulation_settle_tolerance: allowed spread of those samples in
+      watts. It has to be larger than the sensor noise, otherwise the signal
+      never counts as settled and every correction goes through the timeout
+      path with the smaller gain. With 12 samples and noise of +-3 W the
+      typical spread is about 5 W.
+      self_regulation_settle_tolerance: allowed spread of those samples in
       watts. Choose a larger value with a noisy load, otherwise the controller
       waits needlessly.
       self_regulation_settle_max_wait: if the signal does not settle within
       this time, a correction is made anyway, but with timeout_gain. 0 = wait
       indefinitely, then only export is corrected.
-      self_regulation_settle_gain: fraction of the deviation compensated once
-      settled. 0.8 leaves some margin against overshoot.
+      self_regulation_settle_gain: fraction of the deviation compensated when
+      regulating up once settled. 0.8 leaves margin, because overshooting here
+      means export.
+      self_regulation_settle_gain_down: the same for regulating down. 1.0 is
+      the exact value - the new setpoint is setpoint plus grid value minus
+      reserve, which puts the grid value exactly on the reserve. An error here
+      lands on the import side and is harmless.
+      self_regulation_fast_threshold: deviation in watts from which a
+      correction is made immediately out of the resting state, without waiting
+      for the signal to settle. Noise never gets that large - it is necessarily
+      a real load event such as a fridge switching on or off. While the device
+      is ramping up on the bridge's own correction the fast path does not
+      apply, because the deviation is just as large there and would trigger a
+      second correction for the same event. 0 = off.
+      self_regulation_reaction_timeout: after a command the bridge first waits
+      for the measurement to move at all - during the device's dead time it
+      stands still, and a short sample window would wrongly count that as
+      settled. If no movement appears (for instance because the correction was
+      smaller than the noise), it continues after this time. 0 = do not wait
+      for the reaction.
       self_regulation_timeout_gain: fraction compensated after
       settle_max_wait expires - smaller, because the measurement is not
       reliable then.
       self_regulation_reserve: upper edge of the hold band in watts and the
       target of every correction. Typical values are 10-15 W.
+      self_regulation_base_load: base load in watts always present on this
+      phase, used as a lower bound for the setpoint. A downward step stops
+      there instead of falling through to 0 W. If export is still measured
+      afterwards, the next step may go below, so that a base load set too high
+      cannot force permanent export. 0 = off. Choose the value so that the
+      clamp reads roughly the reserve and not 0 W - otherwise the lower bound
+      binds on every return to base load and costs an extra control cycle.
       self_regulation_band_low: lower edge of the hold band. Between this edge
       and the reserve nothing is regulated at all - a grid import below the
       reserve is better than the reserve itself. 0 = every export is corrected
