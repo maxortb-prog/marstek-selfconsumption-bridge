@@ -52,7 +52,6 @@ Leerer Benutzername = anonyme Verbindung.
 | `request_retries` | `2` | `0` = kein Retry, Nachricht wird verworfen und löst **keinen** Watchdog aus. `>0` = Wiederholungen, bei endgültigem Fehlschlag Watchdog. |
 | `request_max_time` | `10.0` | Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten, greift der Watchdog (Sonderfall). |
 | `poll_enabled` | `true` | Hauptschalter für das zyklische Polling. |
-| `poll_only_at_rest` | `true` | Statusabfragen nur, wenn die Regelung in Ruhe ist. |
 | `poll_quiet_after_write` | `3.0` | Ruhezeit nach einem Schreibkommando, in der keine Statusabfrage startet. |
 | `poll_interval_es_status` | `10` | `ES.GetStatus` - die laufenden Leistungswerte. |
 | `poll_interval_battery` | `300` | `Bat.GetStatus` - vor allem die Temperatur. |
@@ -90,14 +89,9 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_keepalive_interval` | `0.0` | Abstand zwischen zwei Keepalives in Sekunden. `0` = halbe `cd_time`. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
-| `self_regulation_settle_samples` | `3` | So viele Messwerte in Folge müssen dicht beieinander liegen. |
-| `self_regulation_settle_tolerance` | `10` | Erlaubte Spanne dieser Messwerte in Watt. |
-| `self_regulation_settle_max_wait` | `60` | Pendelt es sich nicht ein, wird nach dieser Zeit trotzdem korrigiert. `0` = unbegrenzt warten. |
-| `self_regulation_settle_gain` | `0.8` | Anteil der Abweichung beim Hochregeln. |
-| `self_regulation_settle_gain_down` | `1.0` | Anteil beim Runterregeln - 1,0 ist der exakte Wert. |
-| `self_regulation_fast_threshold` | `100` | Abweichung, ab der aus dem Ruhezustand ohne Wartezeit korrigiert wird. `0` = aus. |
-| `self_regulation_reaction_timeout` | `15.0` | Wartezeit auf die Reaktion des Geräts, bevor das Einpendeln beginnt. `0` = nicht warten. |
-| `self_regulation_timeout_gain` | `0.5` | Anteil nach Ablauf von `settle_max_wait`. |
+| `self_regulation_gain` | `0.8` | Anteil der Abweichung je Regeltakt. |
+| `self_regulation_average_window` | `5.0` | Mittelungsfenster in Sekunden vor jedem Kommando. |
+| `self_regulation_export_margin` | `5.0` | Zusätzlicher Abschlag in Prozent bei einer Einspeise-Korrektur. |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_deadband_percent` | `0.0` | Skaliert das Totband linear mit dem Sollwert (nur beim Hochregeln). `0` = aus. |
@@ -135,272 +129,57 @@ Sollwert = clamp(Sollwert + Schritt, 0, "Passive power")
 
 ### So regelt die Bridge
 
-Der Speicher braucht nach einem Kommando rund **10 Sekunden Totzeit** und
-weitere 10 bis 15 Sekunden Rampe, bis die neue Leistung anliegt. Ein Regler,
-der alle 5 Sekunden nachfasst, korrigiert denselben Fehler vier- bis fünfmal,
-bevor die erste Korrektur überhaupt messbar ist - und schwingt.
-
-Genauso wenig aussagekräftig ist der erste Messwert nach einem **Lastwechsel** -
-er liegt meist mitten in der Änderung. Eine Korrektur darauf trifft einen
-Zwischenstand und muss sofort nachgebessert werden; auch daraus entsteht
-Schwingen.
-
-Die Bridge korrigiert deshalb grundsätzlich nur auf ein **ruhiges, bestätigtes
-Signal**, in zwei Phasen:
-
-1. **Reaktion abwarten.** Während der Totzeit steht der Messwert still. Ein
-   kurzes Stichprobenfenster würde das fälschlich als „eingependelt" werten und
-   auf einen Zustand korrigieren, den das Gerät noch gar nicht erreicht hat.
-   Die Bridge merkt sich deshalb den Messwert vor dem Kommando und die
-   befohlene Änderung und wartet, bis sich der Messwert um mindestens 30 % der
-   erwarteten Bewegung geändert hat. Bleibt sie aus - etwa weil die Korrektur
-   kleiner war als das Rauschen - geht es nach `reaction_timeout` trotzdem
-   weiter.
-2. **Ruhe abwarten.** Erst jetzt zählt das Fenster der letzten
-   `settle_samples` Messwerte. Liegen sie innerhalb von `settle_tolerance`,
-   steht das System und es wird korrigiert - auf den **Mittelwert** des
-   Fensters, nicht auf den zufällig letzten Einzelwert.
-3. Nach jedem Kommando beginnt beides von vorn.
-4. Beruhigt sich das Signal innerhalb von `settle_max_wait` nicht, wird
-   trotzdem korrigiert, dann mit dem kleineren `timeout_gain`.
-
-Weil die Reaktionsphase die Totzeit abdeckt, darf `settle_samples` kurz sein -
-6 bis 8 Werte reichen. Das verkürzt nicht nur die Regelung, es senkt auch das
-Risiko, dass mitten im Fenster ein Gerät einschaltet und die Messung verfälscht.
-
-**Schnellpfad bei Lastwechseln.** Eine Abweichung von mehr als
-`fast_threshold` ist zwangsläufig ein echtes Lastereignis - so groß wird
-Rauschen nicht. Aus dem **Ruhezustand** heraus wird darauf sofort korrigiert,
-ohne erst ein Fenster zu füllen. Ruhezustand heißt: Das Fenster war
-eingependelt und es gab nichts zu korrigieren.
-
-Während das Gerät auf eine eigene Korrektur hochfährt, gilt der Schnellpfad
-ausdrücklich **nicht**. Dort durchläuft der Messwert dieselbe Strecke und wäre
-genauso weit vom Ziel entfernt - eine Korrektur mitten im Einschwingen würde
-genau das Schwingen zurückholen, das die Einpendel-Erkennung beseitigt.
-
-Simulation, Kühlschrank mit 130 W schaltet ein und nach zwei Minuten wieder
-aus, Grundlast 50 W:
-
-| | Kommandos | eingespeist | bezogen |
-|---|---|---|---|
-| ohne Schnellpfad | 8 | 2 424 Ws | 6 218 Ws |
-| mit Schnellpfad (100 W) | 7 | 1 758 Ws | 5 415 Ws |
-
-**Totband nach Leistungsniveau.** Mit `deadband_percent` wächst das Totband
-linear mit dem Sollwert, der Grundwert bleibt Untergrenze. Bei hoher Leistung
-sind kleine Abweichungen relativ bedeutungslos, und jede Korrektur kostet ein
-Kommando:
-
-| Sollwert | hoch | runter |
-|---|---|---|
-| bis 100 W | 5 W | 5 W |
-| 200 W | 10 W | 5 W |
-| 400 W | 20 W | 5 W |
-| 600 W | 30 W | 5 W |
-
-Nach unten bleibt es beim Grundwert - sonst würde bei 400 W Sollwert eine
-Einspeisung von 15 W stillschweigend durchgehen.
-
-**Verstärkung je Richtung.** Nach unten ist 1,0 der exakte Wert: Der neue
-Sollwert ist `Sollwert + Netzwert − Reserve`, damit landet der Netzwert genau
-auf der Reserve. Ein Fehler fällt dabei auf die Bezugsseite und ist harmlos.
-Nach oben bleibt mit `settle_gain` eine Marge, weil ein Überschießen dort
-Einspeisung bedeutet.
-
-**Untergrenze Grundlast.** `base_load` ist die Leistung, die auf dieser Phase
-ohnehin verbraucht wird. Ein Abwärtsschritt stoppt dort, statt bis auf 0 W
-durchzufallen - der anschließende Wiederaufstieg wird dadurch kürzer. Das
-Ventil dazu: Die Grenze bremst nur den Schritt *von oben*. Wird danach immer
-noch Einspeisung gemessen, steht der Sollwert bereits auf der Grundlast und der
-nächste Schritt darf darunter. Eine zu hoch eingestellte Grundlast kann so
-keine dauerhafte Einspeisung erzwingen, sie kostet nur einen Zyklus.
-
-**Den Wert richtig ansetzen:** Sende testweise verschiedene Sollwerte im
-Passive-Modus, wenn sonst nichts läuft, und nimm den, bei dem die Messklemme
-etwa die **Reserve** anzeigt - nicht 0 W. Zeigt sie 0, liegt der Arbeitspunkt
-genau an der unteren Bandkante, das Rauschen kippt ihn ständig ins Negative,
-und die Untergrenze bindet bei jeder Rückkehr zur Grundlast. Bei 50 W
-Grundverbrauch und 8 W Reserve ist also ein Wert um 42 richtig, nicht 50.
-
-Ob die Unruhe von der eigenen Korrektur oder von einem Lastwechsel stammt,
-spielt dabei keine Rolle - behandelt wird beides gleich.
-
-Simulation mit 6 Stichproben, Toleranz 8 W, Grundlast 40 W, ±3 W Rauschen:
-
-| Szenario | Kommandos | eingespeist | bezogen |
-|---|---|---|---|
-| Lastabfall 500 → 80 W | 1 | 9 161 Ws | 1 347 Ws |
-| Lastanstieg 60 → 400 W | 3 | 0 Ws | 11 542 Ws |
-| Lastabfall 500 → 20 W (unter der Grundlast) | 3 | 11 212 Ws | 2 205 Ws |
-
-Der Lastabfall wird in einem einzigen Kommando ausgeregelt. Im dritten Fall
-greift das Ventil: Der erste Schritt stoppt bei 40 W, der zweite geht auf 8 W.
-
-**Taktung der Quelle:** Je feiner der Eingang, desto genauer die Erkennung.
-Bewährt hat sich ein Messwert pro Sekunde mit `settle_samples` zwischen 10 und
-15 - dann gilt das System nach 10 bis 15 Sekunden Ruhe als eingeschwungen. Mit
-einem 5-Sekunden-Mittel und 3 Stichproben wird die Erkennung träge und ungenau,
-weil der Mittelwert die Ruhe selbst verschleift.
-
-**`settle_tolerance` muss größer sein als das Rauschen des Sensors.** Sonst gilt
-das Signal nie als eingependelt und jede Korrektur läuft über den Timeout-Pfad
-mit der kleineren Verstärkung - erkennbar im Log an „seit Xs nicht
-eingependelt". Bei 12 Stichproben ergibt ein Rauschen von ±3 W eine typische
-Spanne von 5 W, ±5 W ergeben rund 9 W. In der Simulation kostete eine zu enge
-Toleranz von 3 W gegenüber 8 W mehr als das Doppelte an eingespeister Energie,
-weil jede Korrektur 40 Sekunden zu spät kam.
-
-Jede Sollwertänderung leert das Fenster - auch der Wechsel nach *Passive* über
-den Apply-Button, denn danach schwingt das Gerät ebenso ein. Der Keepalive tut
-das nicht, er sendet nur denselben Wert erneut.
-
-**Das gilt für beide Richtungen.** Auch eine Einspeisung wird erst nach dem
-Einpendeln korrigiert. Während des Einschwingens rutscht der Netzwert praktisch
-immer kurz ins Negative - sofort dagegenzuregeln hieße, auf ein bereits
-vorbeigezogenes Ereignis zu reagieren, und erzeugt genau das Schwingen, das
-vermieden werden soll. Ist der Wert nach dem Einpendeln immer noch negativ,
-wird er wie jede andere Abweichung korrigiert.
-
-Simulation mit Totzeit 10 s, Rampe 5 s, Messung alle 5 s, Lastsprung auf 250 W
-und später auf 500 W:
-
-| | Einpendeln abwarten | feste Schritte im Takt (bis 0.0.27) |
-|---|---|---|
-| Kommandos | 6 | 35 |
-| Netz am Ende | 10 W | −46 W (schwingt) |
-| ins Netz eingespeist | 0 Ws | 2034 Ws |
-
-Die Konvergenz dauert physikalisch bedingt 40 bis 60 Sekunden, bei einem großen
-Lastabfall auch zwei Minuten. Schneller geht es mit diesem Gerät nicht,
-unabhängig vom Verfahren. Bricht die Last ein, während der Speicher noch hohe
-Leistung abgibt, fließt die Differenz bis zur nächsten Korrektur ins Netz - das
-verursacht die Last, nicht die Regelung. Wer das begrenzen will, senkt den
-Deckel *Passive power*.
-
-### Weitere Eigenschaften
-
-* **Halteband** zwischen `band_low` (Standard 0 W) und `reserve`. Liegt der
-  Netzbezug darin, passiert nichts. Ein Bezug von 4 W ist besser als die
-  Reserve von 10 W - dafür Speicherleistung zurückzunehmen wäre verschenkt.
-  Korrigiert wird erst, wenn der Wert das Band verlässt, und dann immer zurück
-  auf die Reserve: bei −20 W also um 30 W. Bis exakt 0 W zurückzuregeln würde
-  den Arbeitspunkt an die Kante legen, wo ihn das nächste Messrauschen wieder
-  ins Negative kippt.
-
-* **Obergrenze** ist die Number-Entity *Passive power*. Ohne Selbstregelung ist
-  sie der direkte Sollwert, mit Selbstregelung nur noch der Deckel. Sie lässt
-  sich im laufenden Betrieb verändern, etwa SOC-abhängig aus einer
-  HA-Automation.
-* **Ein gesenkter Deckel wirkt sofort.** Liegt der aktuelle Sollwert darüber,
-  wird er im selben Moment gekappt und gesendet - ohne Rücksicht auf Totband
-  und Mindestabstand, denn Absenken ist immer die sichere Richtung. Zusätzlich
-  prüft jedes ausgehende Kommando den Sollwert gegen den aktuellen Deckel, auch
-  das des Keepalives. Ein angehobener Deckel wird beim nächsten regulären
-  Regelschritt genutzt.
-* **Das Totband gilt für den Netzwert, nicht für den Sollwert.** Die Schwelle
-  ist `reserve + deadband`: bei Reserve 8 W und Totband 5 W wird ab 13 W
-  Netzbezug nachgeregelt. Nach unten greift es praktisch nie, weil schon die
-  Reserve allein größer ist als ein üblicher Totbandwert.
-* **Ändert sich der Sollwert nicht**, wird nichts gesendet - etwa wenn er
-  bereits am Deckel steht.
-* **Untergrenze** ist fest 0 W. Der Sollwert wird nie negativ, es wird also
-  weder ins Netz eingespeist noch aus dem Netz geladen.
-* **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der
-  Regler kann sich nicht über den Deckel hinaus aufsummieren.
-* **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert erneut und
-  startet damit den Countdown des Geräts neu - standardmäßig alle `cd_time/2`
-  Sekunden, mit `passive_keepalive_interval` frei einstellbar. Die Hälfte ist
-  eine Faustregel und liegt direkt an der Grenze; ein Drittel der `cd_time`
-  gibt mehr Luft. Zu kurz ist aber auch nicht gut, denn jedes Keepalive ist ein
-  Schreibkommando und beschäftigt den Speicher. Der Timer wird von jedem
-  gesendeten Passive-Kommando zurückgesetzt, auch von einer Regelkorrektur -
-  während die Regelung arbeitet, feuert der Keepalive also kaum.
-  Bleiben Werte länger als `self_regulation_input_timeout` aus (HA-Neustart,
-  Automation deaktiviert, Sensor tot), fällt der Sollwert auf 0 W.
-* **Voraussetzung:** Der Modus *Passive* muss über Select und Apply-Button
-  aktiv sein. Solange ein anderer Modus läuft, wird der Regelwert nur
-  gespeichert und angezeigt. Danach ist ein erneutes Apply weder nötig noch
-  wirksam - der Keepalive hält den Modus am Leben, und ein Apply von außen
-  würde nur einen veralteten Sollwert dazwischenschieben.
-
-Beispiel mit Reserve 12 W, Deckel 600 W, Standardparametern:
-
-| Netz | Sollwert alt | | Sollwert neu |
-|---|---|---|---|
-| 512 W | 0 | halbe Abweichung, gedeckelt auf 50 | 50 W |
-| 512 W | 50 | ebenso | 100 W |
-| … | … | neun Schritte à 50 W | 450 W |
-| 62 W | 450 | halbe Abweichung = 25 | 475 W |
-| 12 W | 497 | Ziel erreicht | 497 W |
-| −450 W | 497 | voller Betrag, sofort | 35 W |
-
-Payload-Formate: eine reine Zahl (`415` oder `415.7`) oder JSON mit einem der
-Schlüssel `value`, `state`, `power`, `p`.
-
-Beispiel-Automation:
-
-```yaml
-alias: Publish MQTT Marstek Regelwert
-triggers:
-  - trigger: state
-    entity_id: sensor.phase_c_average
-  - trigger: time_pattern
-    seconds: /5
-conditions:
-  - condition: template
-    value_template: >-
-      {{ states('sensor.phase_c_average') not in
-         ['unknown', 'unavailable', 'none', ''] }}
-  - condition: state
-    entity_id: sensor.marstek_..._system_communication
-    state: "ON"
-actions:
-  - action: mqtt.publish
-    data:
-      topic: marstek/average_phaseC
-      payload: "{{ states('sensor.phase_c_average') | float(0) | round(0) }}"
-      qos: 0
-      retain: false
-mode: single
-```
-
-Zur Glättung der Quelle: Ein kurzes Mittel (etwa 5 Sekunden) reicht, weil die
-Bridge nach oben ohnehin dämpft. Ein längeres Fenster verzögert nur die
-Reaktion auf Lastabfälle, also genau das, was schnell gehen soll.
-
-Neue Entities im Gerät *Marstek Energy Control*: Switch **Self-regulation**,
-Sensor **Regulation input** (zuletzt empfangen) und Sensor **Regulation output**
-(zuletzt gesendet).
-
-### Log-Level
-
-| Level | Zeigt |
-|---|---|
-| `error` / `warning` | nur Probleme |
-| `info` | Ablauf: Init, Modus-Wechsel, jede empfangene MQTT-Regelnachricht |
-| `calc` | zusätzlich alle **Rechenwege**: Regelschritte mit Totzeit-Korrektur, Keepalive, Totband- und Deckel-Eingriffe, automatische `ES.SetMode`-Kommandos, PV-Energiezähler |
-| `debug` | zusätzlich jede UDP-Abfrage und jedes MQTT-Kommando |
-| `trace` | zusätzlich jedes einzelne UDP- und MQTT-Paket im Klartext |
-
-`calc` ist die Stufe zum Nachvollziehen der Regelung, ohne sich das
-Protokoll-Rauschen einzuhandeln. Eine Zeile pro Regelschritt sieht so aus:
+Der Passive-Modus läuft nach `cd_time` aus, es muss also ohnehin regelmäßig ein
+Kommando raus. **Dieser Keepalive-Takt ist der Regeltakt** - ein eigener
+Zeitplan wäre nur eine zweite Uhr für dieselbe Sache.
 
 ```
-CALC  Rechnung: Netz 21.0 W - Totzeit 8.0 W = 13.0 W | Band 0-10 W |
-      Abweichung +3.0 W | Schritt +1.5 W (hoch, gain 0.5 / max 50 W) |
-      17 -> 19 W | Deckel 180 W
-CALC  Selbstregelung hoch: 17 W -> 19 W wird gesendet
-CALC  Passive-Keepalive: 19 W erneut gesendet (cd_time=30s)
+je Takt (passive_keepalive_interval):
+    Mittel der letzten average_window Sekunden bilden
+    liegt es außerhalb von Halteband und Totband? → korrigieren
+    Kommando senden (korrigiert oder unverändert)
+
+dazwischen, höchstens einmal je Takt:
+    Mittel unter band_low? → Einspeise-Korrektur mit voller Verstärkung
+    und export_margin Prozent zusätzlichem Abschlag, nie unter base_load
 ```
 
-Damit ist jeder Schritt nachrechenbar: gemessener Wert, Lage zum Halteband,
-Größe und Begründung des Schritts, alter und neuer Sollwert.
+Gemittelt wird nur über Werte, die **nach dem letzten Kommando** eingetroffen
+sind. Solange das Fenster nicht voll ist, wird nicht gerechnet - während das
+Gerät noch auf die alte Vorgabe hinläuft, ist ein Messwert nichts wert.
 
-Wiederkehrende Meldungen ohne Konsequenz - „im Totband", „warte auf
-Einpendeln" - erscheinen höchstens alle 10 Sekunden, ebenso die INFO-Zeile für
-einen Messwert, der am Sollwert nichts ändert. Sonst liefe bei einem
-Sekundentakt jede Sekunde eine Zeile durch.
+**Die Verstärkung muss zum Takt passen.** Das Gerät braucht rund 10 Sekunden
+Totzeit und weitere 10 bis 15 Sekunden Rampe. Bei einem Takt von 20 Sekunden
+misst die Bridge in den Sekunden 15 bis 20, also bei etwa 85 Prozent der
+Rampe - der Messwert ist systematisch zu hoch, die Korrektur fiele zu groß
+aus. Solange `gain` **unter** diesem Anteil bleibt, konvergiert es trotzdem.
+0,7 bis 0,8 sind passend; bei 0,9 wird es grenzwertig. Alternativ den Takt auf
+25 Sekunden ziehen, dann ist die Rampe durch.
+
+Simulation mit 10 s Totzeit, 5 s Rampe, Messung jede Sekunde, ±3 W Rauschen:
+
+| | Korrekturen | eingespeist | bezogen |
+|---|---|---|---|
+| Lastanstieg 60 → 400 W, gain 0,8, Takt 20 s | 5 | 175 Ws | 13 634 Ws |
+| Lastanstieg 60 → 400 W, gain 0,7, Takt 20 s | 6 | 31 Ws | 14 614 Ws |
+| Lastanstieg 60 → 400 W, gain 0,8, Takt 25 s | 3 | 0 Ws | 14 575 Ws |
+| Lastabfall 500 → 80 W, gain 0,8, Takt 20 s | 5 | 11 194 Ws | 2 547 Ws |
+
+**Einspeisung zwischen zwei Takten** löst eine Sofortkorrektur aus, aber erst
+wenn ein volles Mittelungsfenster seit dem letzten Kommando vorliegt - ein
+einzelner negativer Wert während des Einschwingens ist kein Grund zu handeln.
+Und höchstens einmal je Takt: Das Fenster ist nach wenigen Sekunden wieder
+voll, das Gerät hat zu dem Zeitpunkt aber noch nicht einmal angefangen zu
+reagieren. Ohne diese Sperre würde die Bridge im Sekundentakt nachsetzen und
+den Sollwert weit unter den nötigen Wert treiben.
+
+### Statusabfragen
+
+`ES.GetStatus` und die übrigen Abfragen laufen im ruhigen Fenster zwischen zwei
+Regeltakten: nicht in den ersten `poll_quiet_after_write` Sekunden nach einem
+Kommando, und nicht in den letzten Sekunden davor, in denen die Messwerte für
+den Mittelwert gesammelt werden. Eine Abfrage, die das Doppelte ihres
+Intervalls überfällig ist, läuft trotzdem.
 
 ### Was das Gerät meldet
 

@@ -44,7 +44,6 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "request_retries": 2,
         "request_max_time": 10.0,
         "poll_quiet_after_write": 3.0,
-        "poll_only_at_rest": True,
         "poll_enabled": True,
         "poll_interval_es_status": 10,
         "poll_interval_battery": 300,
@@ -70,14 +69,9 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "passive_keepalive_interval": 0.0,
         "self_regulation_enabled": False,
         "self_regulation_topic": "",
-        "self_regulation_settle_samples": 3,
-        "self_regulation_settle_tolerance": 10,
-        "self_regulation_settle_max_wait": 60,
-        "self_regulation_settle_gain": 0.8,
-        "self_regulation_settle_gain_down": 1.0,
-        "self_regulation_reaction_timeout": 15.0,
-        "self_regulation_fast_threshold": 100,
-        "self_regulation_timeout_gain": 0.5,
+        "self_regulation_gain": 0.8,
+        "self_regulation_average_window": 5.0,
+        "self_regulation_export_margin": 5.0,
         "self_regulation_reserve": 12,
         "self_regulation_band_low": 0,
         "self_regulation_base_load": 0,
@@ -137,7 +131,6 @@ class Settings:
     request_retries: int = 2
     request_max_time: float = 10.0
     poll_quiet_after_write: float = 3.0
-    poll_only_at_rest: bool = True
     poll_enabled: bool = True
     poll_interval_es_status: int = 10
     poll_interval_battery: int = 300
@@ -163,14 +156,9 @@ class Settings:
     passive_keepalive_interval: float = 0.0
     self_regulation_enabled: bool = False
     self_regulation_topic: str = ""
-    self_regulation_settle_samples: int = 3
-    self_regulation_settle_tolerance: int = 10
-    self_regulation_settle_max_wait: int = 60
-    self_regulation_settle_gain: float = 0.8
-    self_regulation_settle_gain_down: float = 1.0
-    self_regulation_reaction_timeout: float = 15.0
-    self_regulation_fast_threshold: int = 100
-    self_regulation_timeout_gain: float = 0.5
+    self_regulation_gain: float = 0.8
+    self_regulation_average_window: float = 5.0
+    self_regulation_export_margin: float = 5.0
     self_regulation_reserve: int = 12
     self_regulation_band_low: int = 0
     self_regulation_base_load: int = 0

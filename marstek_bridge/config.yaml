@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.0.37"
+version: "0.1.0"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -47,7 +47,6 @@ options:
     request_retries: 2
     request_max_time: 10.0
     poll_quiet_after_write: 3.0
-    poll_only_at_rest: true
     poll_enabled: true
     poll_interval_es_status: 10
     poll_interval_battery: 300
@@ -71,14 +70,9 @@ options:
     passive_keepalive_interval: 0.0
     self_regulation_enabled: false
     self_regulation_topic: ""
-    self_regulation_settle_samples: 3
-    self_regulation_settle_tolerance: 10
-    self_regulation_settle_max_wait: 60
-    self_regulation_settle_gain: 0.8
-    self_regulation_settle_gain_down: 1.0
-    self_regulation_reaction_timeout: 15.0
-    self_regulation_fast_threshold: 100
-    self_regulation_timeout_gain: 0.5
+    self_regulation_gain: 0.8
+    self_regulation_average_window: 5.0
+    self_regulation_export_margin: 5.0
     self_regulation_reserve: 12
     self_regulation_band_low: 0
     self_regulation_base_load: 0
@@ -115,7 +109,6 @@ schema:
     request_retries: int(0,10)
     request_max_time: float(0.5,300)
     poll_quiet_after_write: float(0,60)
-    poll_only_at_rest: bool
     poll_enabled: bool
     poll_interval_es_status: int(0,86400)
     poll_interval_battery: int(0,86400)
@@ -139,14 +132,9 @@ schema:
     passive_keepalive_interval: float(0,300)
     self_regulation_enabled: bool
     self_regulation_topic: str?
-    self_regulation_settle_samples: int(2,20)
-    self_regulation_settle_tolerance: int(1,500)
-    self_regulation_settle_max_wait: int(0,600)
-    self_regulation_settle_gain: float(0.1,1.0)
-    self_regulation_settle_gain_down: float(0.1,1.0)
-    self_regulation_reaction_timeout: float(0,120)
-    self_regulation_fast_threshold: int(0,5000)
-    self_regulation_timeout_gain: float(0.0,1.0)
+    self_regulation_gain: float(0.1,1.0)
+    self_regulation_average_window: float(1,60)
+    self_regulation_export_margin: float(0,50)
     self_regulation_reserve: int(0,500)
     self_regulation_band_low: int(-500,500)
     self_regulation_base_load: int(0,5000)

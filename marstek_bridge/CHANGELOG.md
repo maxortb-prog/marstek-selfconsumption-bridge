@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.0 - 2026-10-01
+
+**Der Regelkern wurde deutlich vereinfacht.** Nach dem Update einmal die
+Add-on Konfiguration oeffnen und speichern.
+
+- Der Keepalive-Takt ist jetzt der Regeltakt: Vor jedem ohnehin faelligen
+  Kommando wird ein Mittel ueber `self_regulation_average_window` Sekunden
+  gebildet und daraus korrigiert. Damit entfallen Reaktionsphase,
+  Stichprobenfenster, Einpendel-Erkennung, Timeout-Pfad und Schnellpfad.
+- Entfallene Optionen: `self_regulation_settle_samples`,
+  `self_regulation_settle_tolerance`, `self_regulation_settle_max_wait`,
+  `self_regulation_settle_gain_down`, `self_regulation_timeout_gain`,
+  `self_regulation_reaction_timeout`, `self_regulation_fast_threshold`,
+  `poll_only_at_rest`.
+- `self_regulation_settle_gain` heisst jetzt `self_regulation_gain`.
+- Neue Optionen: `self_regulation_average_window` (Standard 5 s) und
+  `self_regulation_export_margin` (Standard 5 % des neuen Sollwerts).
+- Einspeisung zwischen zwei Takten loest eine Sofortkorrektur aus, hoechstens
+  eine je Takt und erst mit vollem Mittelungsfenster.
+- `base_load` bleibt Untergrenze, die Erkennung eines haengenden Regelsignals
+  arbeitet jetzt ueber den Vergleich aufeinanderfolgender Takte.
+- Statusabfragen laufen im ruhigen Fenster zwischen zwei Regeltakten.
+
 ## 0.0.37 - 2026-10-01
 
 - Neue Option `passive_keepalive_interval`: Abstand zwischen zwei Keepalives
