@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1 - 2026-10-01
+
+- **Fix:** `self_regulation_export_margin` bezieht sich jetzt auf die
+  berechnete Korrektur statt auf den neuen Sollwert. Bisher waren 5 Prozent bei
+  300 W Sollwert immer 15 W - auch bei einem halben Watt Einspeisung, wo die
+  eigentliche Korrektur 8 W betrug. Der Sollwert brach dadurch bei jedem
+  kurzen Tippen unter die Bandkante um ueber 20 W ein.
+- **Fix:** Das Totband wirkt jetzt in beide Richtungen. Es misst den Abstand
+  zum Halteband - nach oben ab der Reserve, nach unten ab `band_low`. Bisher
+  wurde nach unten ab der Reserve gemessen, womit schon die kleinste
+  Einspeisung die vollen 8 W enthielt und das Totband dort nie greifen konnte.
+- Die CALC-Zeile nennt zusaetzlich den Abstand zum Halteband.
+
 ## 0.1.0 - 2026-10-01
 
 **Der Regelkern wurde deutlich vereinfacht.** Nach dem Update einmal die

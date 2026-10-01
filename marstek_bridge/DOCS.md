@@ -91,7 +91,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
 | `self_regulation_gain` | `0.8` | Anteil der Abweichung je Regeltakt. |
 | `self_regulation_average_window` | `5.0` | Mittelungsfenster in Sekunden vor jedem Kommando. |
-| `self_regulation_export_margin` | `5.0` | Zusätzlicher Abschlag in Prozent bei einer Einspeise-Korrektur. |
+| `self_regulation_export_margin` | `5.0` | Zusätzlicher Abschlag in Prozent **der Korrektur** bei Einspeisung. |
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_deadband_percent` | `0.0` | Skaliert das Totband linear mit dem Sollwert (nur beim Hochregeln). `0` = aus. |

@@ -1058,20 +1058,32 @@ class Bridge:
 
         reserve = self.s.self_regulation_reserve
         low = self.s.self_regulation_band_low
-        if value > reserve or value < low:
+        if value > reserve:
             error = value - reserve
+            abstand = value - reserve
+        elif value < low:
+            # Korrigiert wird auf die Reserve, gemessen wird der Abstand zum
+            # Band - sonst enthielte schon die kleinste Einspeisung die volle
+            # Reserve und das Totband koennte nach unten nie greifen.
+            error = value - reserve
+            abstand = value - low
         else:
             error = 0.0
+            abstand = 0.0
         self._last_in_band = error == 0.0
 
         step = error * gain
+        # Der Aufschlag bezieht sich auf die Korrektur, nicht auf den Sollwert.
+        # Sonst waere er bei hohem Sollwert und winziger Einspeisung riesig -
+        # 5 % von 300 W sind 15 W, egal ob 0,5 W oder 200 W eingespeist wurden.
+        if margin_percent > 0 and step < 0:
+            step *= 1.0 + margin_percent / 100.0
         raw = base + step
-        if margin_percent > 0:
-            raw *= 1.0 - margin_percent / 100.0
         out = self._clamp_setpoint(raw, base)
         self._last_calc = {
             "value": value,
             "error": error,
+            "distance": abstand,
             "step": step,
             "gain": gain,
             "base": base,
@@ -1134,12 +1146,14 @@ class Bridge:
             lage = f"{c['gain'] * 100:.0f}% der Abweichung"
         _LOGGER.log(
             CALC_LEVEL,
-            "%s: Mittel %.1f W | Band %s-%s W | Abweichung %+.1f W | "
-            "Schritt %+.1f W (%s) | %s -> %s W | Deckel %s W",
+            "%s: Mittel %.1f W | Band %s-%s W | Abstand %+.1f W | "
+            "Abweichung %+.1f W | Schritt %+.1f W (%s) | %s -> %s W | "
+            "Deckel %s W",
             grund,
             c["value"],
             self.s.self_regulation_band_low,
             self.s.self_regulation_reserve,
+            c.get("distance", 0.0),
             c["error"],
             c["step"],
             lage,
@@ -1215,7 +1229,13 @@ class Bridge:
         if self._export_done:
             return
         mittel = self._input_mean()
-        if mittel is None or mittel >= self.s.self_regulation_band_low:
+        if mittel is None:
+            return
+        abstand = self.s.self_regulation_band_low - mittel
+        if abstand < self._deadband_for(-1.0):
+            # Unterhalb des Totbands ist eine Einspeisung kein Grund zu
+            # handeln - bei Messrauschen tippt der Wert staendig kurz unter
+            # die Bandkante.
             return
         self._regulate(export=True)
 
@@ -1263,11 +1283,15 @@ class Bridge:
             grund = "Regeltakt"
 
         error = float(self._last_calc.get("error", 0.0))
+        abstand = float(self._last_calc.get("distance", 0.0))
         totband = self._deadband_for(error)
-        if not export and abs(error) < totband:
+        if abs(abstand) < totband:
             out = vorher
             self._last_calc["out"] = out
-            grund = f"Regeltakt, Abweichung {error:+.1f} W im Totband {totband:.0f} W"
+            grund = (
+                f"{'Einspeisung' if export else 'Regeltakt'}, Abstand zum Band "
+                f"{abstand:+.1f} W im Totband {totband:.0f} W"
+            )
 
         self._log_calculation(grund)
         ctrl["regulation_output"] = out

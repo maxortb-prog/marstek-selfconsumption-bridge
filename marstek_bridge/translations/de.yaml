@@ -113,10 +113,12 @@ configuration:
       self_regulation_average_window: Laenge des Mittelungsfensters in Sekunden
       direkt vor einem Kommando. Gemittelt wird nur ueber Werte, die nach dem
       letzten Kommando eingetroffen sind.
-      self_regulation_export_margin: zusaetzlicher Abschlag in Prozent des
-      neuen Sollwerts bei einer Einspeise-Korrektur, damit das Ergebnis eher im
-      Netzbezug landet als erneut im Negativen. Je Takt wird hoechstens eine
-      solche Korrektur ausgefuehrt.
+      self_regulation_export_margin: zusaetzlicher Abschlag in Prozent der
+      berechneten Korrektur bei einer Einspeise-Korrektur, damit das Ergebnis
+      eher im Netzbezug landet als erneut im Negativen. Bewusst auf die
+      Korrektur bezogen und nicht auf den Sollwert: bei 300 W Sollwert waeren
+      5 Prozent sonst immer 15 W, egal ob 0,5 W oder 200 W eingespeist wurden.
+      Je Takt wird hoechstens eine solche Korrektur ausgefuehrt.
       self_regulation_reserve: obere Kante des Haltebands in Watt und Ziel
       jeder Korrektur. Uebliche Werte 10-15 W.
       self_regulation_base_load: Grundlast in Watt, die auf dieser Phase
@@ -147,11 +149,11 @@ configuration:
       der Reserve ist besser als die Reserve selbst. 0 = jede Einspeisung wird
       sofort korrigiert; ein kleiner negativer Wert toleriert kurze Ausreisser
       ins Negative, falls die Regelung durch Messrauschen zu nervoes wird.
-      self_regulation_deadband: Abweichung des Netzwerts in Watt, unter der
-      nicht geregelt wird - gemessen ab der Reserve. Reserve 8 plus Totband 5
-      heisst also: erst ab 13 W Netzbezug wird nachgeregelt. Das gilt fuer
-      beide Richtungen - auch eine Einspeisung wird erst nach dem Einpendeln
-      korrigiert.
+      self_regulation_deadband: Abstand zum Halteband in Watt, unter dem nicht
+      geregelt wird. Nach oben gerechnet ab der Reserve, nach unten ab
+      band_low: Reserve 8 plus Totband 5 heisst 13 W Netzbezug, band_low 0 plus
+      Totband 5 heisst 5 W Einspeisung. Korrigiert wird danach immer auf die
+      Reserve.
       self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
       der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
       HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.

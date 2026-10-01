@@ -109,8 +109,11 @@ configuration:
       right before a command. Only samples received after the last command are
       averaged.
       self_regulation_export_margin: additional reduction in per cent of the
-      new setpoint on an export correction, so the result lands on the import
-      side rather than back in export. At most one such correction per cycle.
+      calculated correction on an export correction, so the result lands on the
+      import side rather than back in export. Deliberately relative to the
+      correction and not to the setpoint: at a setpoint of 300 W, 5 per cent
+      would otherwise always be 15 W, no matter whether 0.5 W or 200 W were
+      exported. At most one such correction per cycle.
       self_regulation_reserve: upper edge of the hold band in watts and the
       target of every correction. Typical values are 10-15 W.
       self_regulation_base_load: base load in watts always present on this
@@ -140,11 +143,11 @@ configuration:
       reserve is better than the reserve itself. 0 = every export is corrected
       immediately; a small negative value tolerates brief excursions if
       measurement noise makes the controller too twitchy.
-      self_regulation_deadband: deviation of the grid value in watts below
-      which nothing is regulated, measured from the reserve. Reserve 8 plus
-      deadband 5 therefore means: correction starts at 13 W of grid import.
-      This applies to both directions - export is also corrected only after
-      the signal has settled.
+      self_regulation_deadband: distance to the hold band in watts below which
+      nothing is regulated. Measured from the reserve upwards and from band_low
+      downwards: reserve 8 plus deadband 5 means 13 W of import, band_low 0
+      plus deadband 5 means 5 W of export. The correction itself always targets
+      the reserve.
       self_regulation_input_timeout: seconds without a new control value after
       which the setpoint falls back to 0 W. Prevents the keepalive from
       re-sending the last value forever after a Home Assistant restart. 0 =
