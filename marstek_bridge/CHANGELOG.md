@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.37 - 2026-10-01
+
+- Neue Option `passive_keepalive_interval`: Abstand zwischen zwei Keepalives
+  frei einstellbar, `0` behaelt die bisherige halbe `cd_time`. Die Haelfte war
+  eine Faustregel und liegt direkt an der Grenze - bei `cd_time: 60` feuert der
+  Keepalive exakt alle 30 Sekunden, und schon geringe Verzoegerungen lassen den
+  Countdown des Geraets ablaufen.
+- Warnung beim Start, wenn das Intervall nicht kleiner als die `cd_time` ist.
+
 ## 0.0.36 - 2026-10-01
 
 - Jede `ES.GetStatus`-Antwort wird auf `calc` mit Netz-, Batterie- und

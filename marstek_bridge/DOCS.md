@@ -87,6 +87,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_power_default` | `0` | Startwert der Number-Entity. |
 | `passive_cd_time_max` | `300` | Maximaler Countdown in Sekunden. |
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
+| `passive_keepalive_interval` | `0.0` | Abstand zwischen zwei Keepalives in Sekunden. `0` = halbe `cd_time`. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
 | `self_regulation_settle_samples` | `3` | So viele Messwerte in Folge müssen dicht beieinander liegen. |
@@ -307,8 +308,14 @@ Deckel *Passive power*.
   weder ins Netz eingespeist noch aus dem Netz geladen.
 * **Kein Windup:** Basis jedes Schritts ist der bereits begrenzte Sollwert, der
   Regler kann sich nicht über den Deckel hinaus aufsummieren.
-* **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert alle
-  `cd_time/2` Sekunden erneut und startet damit den Countdown des Geräts neu.
+* **Kein neuer Wert?** Der Keepalive sendet den aktuellen Sollwert erneut und
+  startet damit den Countdown des Geräts neu - standardmäßig alle `cd_time/2`
+  Sekunden, mit `passive_keepalive_interval` frei einstellbar. Die Hälfte ist
+  eine Faustregel und liegt direkt an der Grenze; ein Drittel der `cd_time`
+  gibt mehr Luft. Zu kurz ist aber auch nicht gut, denn jedes Keepalive ist ein
+  Schreibkommando und beschäftigt den Speicher. Der Timer wird von jedem
+  gesendeten Passive-Kommando zurückgesetzt, auch von einer Regelkorrektur -
+  während die Regelung arbeitet, feuert der Keepalive also kaum.
   Bleiben Werte länger als `self_regulation_input_timeout` aus (HA-Neustart,
   Automation deaktiviert, Sensor tot), fällt der Sollwert auf 0 W.
 * **Voraussetzung:** Der Modus *Passive* muss über Select und Apply-Button

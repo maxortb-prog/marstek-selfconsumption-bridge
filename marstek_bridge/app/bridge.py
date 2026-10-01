@@ -331,6 +331,22 @@ class Bridge:
                 self.s.self_regulation_settle_tolerance,
             )
 
+        keepalive = self.s.passive_keepalive_interval
+        if keepalive > 0:
+            cd = self.s.passive_cd_time_default
+            _LOGGER.info(
+                "Passive-Keepalive alle %.0fs (cd_time %ss)", keepalive, cd
+            )
+            if keepalive >= cd:
+                _LOGGER.warning(
+                    "passive_keepalive_interval (%.0fs) ist nicht kleiner als "
+                    "die cd_time (%ss) - der Countdown des Geraets kann "
+                    "zwischendurch ablaufen und der Passive-Modus endet. "
+                    "Empfehlung: deutlich darunter bleiben, etwa ein Drittel",
+                    keepalive,
+                    cd,
+                )
+
         if not self._connect_mqtt_blocking():
             return
 
@@ -1674,12 +1690,21 @@ class Bridge:
         cd = int(ctrl.get("passive_cd_time", self.s.passive_cd_time_default) or 0)
         if cd <= 0:
             return
-        interval = max(1.0, cd / 2.0)
+        # Eigenes Intervall, sonst die halbe cd_time als Faustregel. Der Timer
+        # wird von jedem gesendeten Passive-Kommando zurueckgesetzt, auch von
+        # einer Regelkorrektur - waehrend die Regelung arbeitet, feuert der
+        # Keepalive also ohnehin kaum.
+        interval = self.s.passive_keepalive_interval
+        if interval <= 0:
+            interval = cd / 2.0
+        interval = max(1.0, interval)
         if time.monotonic() - self._last_passive_push >= interval:
             _LOGGER.log(
                 CALC_LEVEL,
-                "Passive-Keepalive: %s W erneut gesendet (cd_time=%ss)",
+                "Passive-Keepalive: %s W erneut gesendet (alle %.0fs, "
+                "cd_time=%ss)",
                 self._effective_passive_power(),
+                interval,
                 cd,
             )
             self._apply_mode(refresh=False)

@@ -91,9 +91,18 @@ configuration:
       passive_cd_time_max und passive_cd_time_default: Countdown in Sekunden.
       Nach dessen Ablauf verlässt das Gerät die Passive-Vorgabe wieder, laut
       Doku maximal 300 Sekunden.
-      passive_keepalive: sendet den Passive-Befehl automatisch alle cd_time/2
-      Sekunden erneut, nötig wenn die Vorgabe dauerhaft stehen soll. Bei
-      aktiver Selbstregelung geschieht das ohnehin immer.
+      passive_keepalive: sendet den Passive-Befehl automatisch erneut, nötig
+      wenn die Vorgabe dauerhaft stehen soll. Bei aktiver Selbstregelung
+      geschieht das ohnehin immer.
+      passive_keepalive_interval: Abstand zwischen zwei Keepalives in Sekunden.
+      0 = die halbe cd_time wie bisher. Deutlich kleiner als die cd_time
+      wählen, etwa ein Drittel - bei genau der Hälfte liegt der Keepalive
+      direkt an der Grenze, und schon geringe Verzögerungen lassen den
+      Countdown des Geräts ablaufen. Zu klein ist aber auch nicht gut: jedes
+      Keepalive ist ein Schreibkommando und beschäftigt den Speicher, der dann
+      auf Statusabfragen und Regelkommandos träger reagiert. Der Timer wird von
+      jedem gesendeten Passive-Kommando zurückgesetzt, auch von einer
+      Regelkorrektur.
       self_regulation_enabled: Startzustand der Selbstregelung. Ist sie aktiv,
       wird die gesendete Leistung aus dem MQTT-Regelwert berechnet und die
       Number-Entity "Passive power" dient nur noch als Obergrenze.

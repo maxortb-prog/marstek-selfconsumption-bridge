@@ -67,6 +67,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "passive_cd_time_max": 300,
         "passive_cd_time_default": 10,
         "passive_keepalive": False,
+        "passive_keepalive_interval": 0.0,
         "self_regulation_enabled": False,
         "self_regulation_topic": "",
         "self_regulation_settle_samples": 3,
@@ -159,6 +160,7 @@ class Settings:
     passive_cd_time_max: int = 300
     passive_cd_time_default: int = 10
     passive_keepalive: bool = False
+    passive_keepalive_interval: float = 0.0
     self_regulation_enabled: bool = False
     self_regulation_topic: str = ""
     self_regulation_settle_samples: int = 3
