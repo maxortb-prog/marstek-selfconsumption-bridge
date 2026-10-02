@@ -38,14 +38,12 @@ configuration:
       attempt also fails the watchdog is triggered.
       request_max_time: hard limit across all attempts of one message, exceeding
       it also triggers the watchdog.
-      poll_quiet_after_write: quiet period in seconds after a write command
-      (ES.SetMode, DOD, LED, Bluetooth). No status query is started during that
-      time - the battery is busy right afterwards and lets queries run into a
-      timeout. An overdue query still runs once it exceeds twice its interval.
-      0 = off.
       poll_enabled: master switch for cyclic polling. Off = data is only read
       at start-up and through the refresh buttons, e.g. from a Home Assistant
       automation.
+      Queries run in the free window between the command and the start of the
+      averaging window; after that the bridge collects the samples for the next
+      control cycle.
       poll_interval_es_status, poll_interval_battery, poll_interval_pv,
       poll_interval_mode, poll_interval_em: interval per query in seconds,
       0 disables that query. The queries differ a lot in value: ES.GetStatus

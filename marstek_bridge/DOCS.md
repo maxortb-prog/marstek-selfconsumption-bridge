@@ -52,7 +52,6 @@ Leerer Benutzername = anonyme Verbindung.
 | `request_retries` | `2` | `0` = kein Retry, Nachricht wird verworfen und löst **keinen** Watchdog aus. `>0` = Wiederholungen, bei endgültigem Fehlschlag Watchdog. |
 | `request_max_time` | `10.0` | Hartes Limit über alle Versuche einer Nachricht. Wird es überschritten, greift der Watchdog (Sonderfall). |
 | `poll_enabled` | `true` | Hauptschalter für das zyklische Polling. |
-| `poll_quiet_after_write` | `3.0` | Ruhezeit nach einem Schreibkommando, in der keine Statusabfrage startet. |
 | `poll_interval_es_status` | `10` | `ES.GetStatus` - die laufenden Leistungswerte. |
 | `poll_interval_battery` | `300` | `Bat.GetStatus` - vor allem die Temperatur. |
 | `poll_interval_pv` | `0` | `PV.GetStatus` - aus, steckt in Teilen in `ES.GetStatus`. |
@@ -242,13 +241,43 @@ Sonderbehandlung.
 alte Wert nachgesendet. Ohne verlässliche Auskunft über den Zustand des Geräts
 ist Stillhalten die sichere Wahl.
 
-### Statusabfragen
+### Der Zeitplan eines Regeltakts
 
-`ES.GetStatus` und die übrigen Abfragen laufen im ruhigen Fenster zwischen zwei
-Regeltakten: nicht in den ersten `poll_quiet_after_write` Sekunden nach einem
-Kommando, und nicht in den letzten Sekunden davor, in denen die Messwerte für
-den Mittelwert gesammelt werden. Eine Abfrage, die das Doppelte ihres
-Intervalls überfällig ist, läuft trotzdem.
+```
+t=0      Kommando raus, Countdown des Geräts startet neu
+         ├─ freies Fenster: battery, pv und andere Abfragen
+t=8      Mittelungsfenster beginnt, Messwerte werden gesammelt
+t=13     ES.GetStatus vor dem Takt (Reserve = request_delay + request_timeout)
+t=15     Mittelwert bilden, rechnen, Kommando raus
+```
+
+Beispiel für `passive_keepalive_interval: 15` und
+`self_regulation_average_window: 5`.
+
+**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit -
+Mindestpause plus Antwort - und der Takt startet um genau diese Reserve früher.
+Ohne das würde sich jeder Takt um die Dauer der Abfrage nach hinten schieben
+und die Marge zur `cd_time` schrumpfen.
+
+**Andere Abfragen** laufen im freien Fenster zwischen Kommando und
+Mittelungsfenster. Eine Abfrage, die das Doppelte ihres Intervalls überfällig
+ist, läuft trotzdem - sie kann nicht verhungern. Bei kurzem Takt bleibt
+allerdings kaum Platz: Bei 10 Sekunden Takt, 5 Sekunden Fenster und 2 Sekunden
+Reserve sind es gerade drei Sekunden.
+
+**Die Verstärkung muss zum Takt passen.** Das Gerät braucht rund 20 Sekunden
+bis zum Einschwingen. Ist der Takt kürzer, wird mehrfach auf denselben Fehler
+korrigiert, und die wirksame Verstärkung ist ein Vielfaches der eingestellten:
+
+| Takt | maximal sinnvolle Verstärkung |
+|---|---|
+| 5 s | 0,25 |
+| 10 s | 0,5 |
+| 15 s | 0,7 |
+| 20 s | 0,9 |
+
+Die Bridge warnt beim Start, wenn `self_regulation_gain` deutlich über diesem
+Richtwert liegt.
 
 ### Was das Gerät meldet
 
@@ -365,36 +394,6 @@ die Selbstregelung aktiv, sendet der Button gar nichts mehr: Zeitpunkt und
 Leistung bestimmt dann die Regelschleife samt Keepalive. Der zuletzt empfangene
 Regelwert wird lediglich für den nächsten Durchlauf vorgemerkt. Sonst löst eine Automation, die zyklisch auf
 Apply drückt, bei jedem Druck ein zusätzliches `ES.GetMode` aus.
-
-### Abfragen nur im Ruhezustand
-
-Während die Selbstregelung auf die Reaktion des Geräts oder auf das Einpendeln
-wartet, rechnet der Speicher an der neuen Vorgabe und antwortet auf
-Statusabfragen oft gar nicht mehr - die Praxis zeigt Timeouts von mehreren
-Sekunden. Die gelieferten Werte wären in dieser Phase ohnehin Momentaufnahmen
-eines Übergangs.
-
-`poll_only_at_rest` verschiebt Abfragen deshalb, bis die Regelung eingependelt
-ist und nichts zu korrigieren hat. Eine Abfrage, die das Doppelte ihres
-Intervalls überfällig ist, läuft trotzdem - sie kann nicht verhungern, auch
-wenn die Regelung dauernd beschäftigt ist.
-
-Das ist die weiter gefasste Fassung von `poll_quiet_after_write`: Die drei
-Sekunden dort decken nur den Moment nach einem Schreibkommando ab, während der
-Speicher in Wahrheit 20 bis 25 Sekunden mit dem Einschwingen beschäftigt ist.
-Ist die Selbstregelung aus, greift weiterhin nur die Ruhezeit.
-
-### Ruhezeit nach Schreibkommandos
-
-Direkt nach einem `ES.SetMode` ist der Speicher einige Sekunden beschäftigt und
-lässt Statusabfragen in den Timeout laufen, obwohl er erreichbar ist.
-`poll_quiet_after_write` (Standard 3 s) hält in dieser Zeit alle Abfragen
-zurück - Polling ebenso wie die Refresh-Buttons.
-
-Bei laufender Selbstregelung landen die Abfragen damit im Fenster zwischen zwei
-Regelkommandos. Damit eine Abfrage bei dichtem Regeltakt nicht dauerhaft
-verschoben wird, läuft sie trotzdem, sobald sie das Doppelte ihres Intervalls
-überfällig ist.
 
 ### Mindestpause zwischen Anfragen
 

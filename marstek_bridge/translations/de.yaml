@@ -39,15 +39,12 @@ configuration:
       letzte Versuch fehl, wird der Watchdog ausgelöst.
       request_max_time: hartes Limit über alle Versuche einer Nachricht, bei
       Überschreitung greift ebenfalls der Watchdog.
-      poll_quiet_after_write: Ruhezeit in Sekunden nach einem Schreibkommando
-      (ES.SetMode, DOD, LED, Bluetooth). In dieser Zeit wird keine
-      Statusabfrage gestartet - der Speicher ist direkt danach beschaeftigt und
-      laesst Abfragen sonst in den Timeout laufen. Eine ueberfaellige Abfrage
-      wird trotzdem ausgefuehrt, sobald sie das Doppelte ihres Intervalls
-      ueberschreitet. 0 = aus.
       poll_enabled: Hauptschalter fuer das zyklische Abfragen. Aus = es wird
       nur nach dem Start und über die Refresh-Buttons abgefragt, etwa aus einer
       HA-Automation heraus.
+      Abfragen laufen im freien Fenster zwischen dem Kommando und dem Beginn
+      des Mittelungsfensters; danach sammelt die Bridge die Messwerte fuer den
+      naechsten Regeltakt.
       poll_interval_es_status, poll_interval_battery, poll_interval_pv,
       poll_interval_mode, poll_interval_em: Intervall je Abfrage in Sekunden,
       0 schaltet die jeweilige Abfrage ab. Die Abfragen sind unterschiedlich

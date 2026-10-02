@@ -328,6 +328,22 @@ class Bridge:
                 self.s.self_regulation_export_margin,
             )
 
+        if self.s.self_regulation_enabled:
+            takt = self.s.passive_keepalive_interval or (
+                self.s.passive_cd_time_default / 2.0
+            )
+            empfohlen = round(min(0.9, max(0.1, takt / 20.0)), 2)
+            if self.s.self_regulation_gain > empfohlen + 0.05:
+                _LOGGER.warning(
+                    "self_regulation_gain (%.2f) passt nicht zum Regeltakt von "
+                    "%.0fs: das Geraet braucht rund 20s bis zum Einschwingen, "
+                    "es wird also mehrfach auf denselben Fehler korrigiert. "
+                    "Empfehlung fuer diesen Takt: %.2f oder kleiner",
+                    self.s.self_regulation_gain,
+                    takt,
+                    empfohlen,
+                )
+
         keepalive = self.s.passive_keepalive_interval
         if keepalive > 0:
             cd = self.s.passive_cd_time_default
@@ -720,7 +736,6 @@ class Bridge:
         result = self._query(M_DOD_SET, {"value": value}, with_instance=False)
         if result is None:
             return False
-        self._note_write()
         self.states[GRP_SYSTEM]["dod_value"] = value
         self._note_set_result(M_DOD_SET, result)
         self._publish_state(GRP_SYSTEM)
@@ -734,7 +749,6 @@ class Bridge:
         )
         if result is None:
             return False
-        self._note_write()
         self.states[GRP_SYSTEM]["ble_block"] = bool(enabled)
         self._note_set_result(M_BLE_ADV, result)
         self._publish_state(GRP_SYSTEM)
@@ -746,7 +760,6 @@ class Bridge:
         )
         if result is None:
             return False
-        self._note_write()
         self.states[GRP_SYSTEM]["led_state"] = bool(on)
         self._note_set_result(M_LED_CTRL, result)
         self._publish_state(GRP_SYSTEM)
@@ -848,7 +861,6 @@ class Bridge:
         result = self._query(M_ES_SET_MODE, {"config": config})
         if result is None:
             return False
-        self._note_write()
         self.states[GRP_ENERGY_CONTROL]["applied_mode"] = mode
         self._note_set_result(
             M_ES_SET_MODE, result, logging.INFO if refresh else CALC_LEVEL
@@ -1207,6 +1219,16 @@ class Bridge:
             interval = cd / 2.0
         return max(1.0, interval)
 
+    def _cycle_reserve(self) -> float:
+        """Zeit, die die Abfrage vor dem Kommando braucht.
+
+        Mindestpause zwischen zwei Anfragen plus Antwortzeit. Um genau diese
+        Spanne startet der Takt frueher, damit das Kommando puenktlich zum
+        Intervall rausgeht - sonst schoebe sich jeder Takt um die Dauer der
+        Abfrage nach hinten und die Marge zur cd_time schrumpft.
+        """
+        return self.s.request_delay + self.s.request_timeout
+
     def _passive_cycle(self) -> None:
         """Einmal je Takt: regeln und senden, oder nur nachsenden."""
         if not self._initialized:
@@ -1221,7 +1243,10 @@ class Bridge:
         interval = self._keepalive_interval()
         if interval <= 0:
             return
-        if time.monotonic() - self._last_passive_push < interval:
+        reserve = 0.0
+        if self._regulation_active():
+            reserve = min(self._cycle_reserve(), max(0.0, interval - 1.0))
+        if time.monotonic() - self._last_passive_push < interval - reserve:
             return
 
         if not self._regulation_active():
@@ -1233,8 +1258,6 @@ class Bridge:
             )
             self._apply_mode(refresh=False)
             return
-
-        self._export_done = False
 
         # Unmittelbar vor dem Kommando den Zustand des Geraets lesen. Zu diesem
         # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
@@ -1268,93 +1291,16 @@ class Bridge:
             self._apply_mode(refresh=False)
             return
 
-        self._regulate(export=False)
+        self._regulate()
 
-    def _check_export(self) -> None:
-        """Zwischen zwei Takten auf Einspeisung reagieren.
+    def _regulate(self) -> None:
+        """Einen Regelschritt ausfuehren und das Kommando senden.
 
-        Gewartet wird auf ein volles Mittelungsfenster nach dem letzten
-        Kommando - ein einzelner negativer Messwert waehrend des Einschwingens
-        ist kein Grund zu handeln.
+        Liegt der Mittelwert unter ``band_low``, wird mit voller Verstaerkung
+        und zusaetzlichem Aufschlag korrigiert - Einspeisung soll in einem
+        Schritt beendet sein und das Ergebnis eher im Netzbezug landen.
+        Ansonsten gilt die gedaempfte Verstaerkung.
         """
-        if not self._regulation_active() or not self._initialized:
-            return
-        ctrl = self.states[GRP_ENERGY_CONTROL]
-        if ctrl.get("applied_mode") != MODE_PASSIVE:
-            return
-        # Hoechstens eine Einspeise-Korrektur je Takt. Das Mittelungsfenster
-        # ist nach wenigen Sekunden wieder voll, das Geraet hat zu dem
-        # Zeitpunkt aber noch nicht einmal angefangen zu reagieren - ohne diese
-        # Sperre wuerde die Bridge im Sekundentakt nachsetzen und den Sollwert
-        # weit unter den noetigen Wert treiben.
-        if self._export_done:
-            return
-        mittel = self._input_mean()
-        if mittel is None:
-            return
-        abstand = self.s.self_regulation_band_low - mittel
-        if abstand < self._deadband_for(-1.0):
-            # Unterhalb des Totbands ist eine Einspeisung kein Grund zu
-            # handeln - bei Messrauschen tippt der Wert staendig kurz unter
-            # die Bandkante.
-            return
-        self._regulate(export=True)
-
-    def _check_device_output(self) -> float:
-        """Vergleicht die gemeldete Ausgangsleistung mit der Erwartung.
-
-        Das Geraet stellt nicht exakt den vorgegebenen Wert ein - zwischen
-        Vorgabe und ``ongrid_power`` liegt ein weitgehend konstanter Verlust
-        (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe, also absolut und
-        nicht proportional). Dieser Offset wird als gleitender Mittelwert
-        gelernt, beginnend beim ersten Messwert.
-
-        Liegt die Meldung deutlich unter ``Vorgabe - Offset``, hat das Geraet
-        seinen Ausgang eigenmaechtig reduziert. Der Anstieg an der
-        Leistungsklemme ist dann dem Speicher zuzuschreiben und nicht einem
-        Verbraucher - die Messwerte des Mittelungsfensters sind unbrauchbar.
-
-        Rueckgabe: fehlende Leistung in Watt, 0 wenn alles in Ordnung ist.
-        """
-        schwelle = self.s.self_regulation_underdelivery
-        if schwelle <= 0 or self._last_ongrid is None:
-            return 0.0
-        gemeldet = self._last_ongrid[0]
-        soll = int(self.states[GRP_ENERGY_CONTROL].get("regulation_output") or 0)
-        if soll <= 0:
-            return 0.0
-
-        if self._loss_offset is None:
-            self._loss_offset = max(0.0, soll - gemeldet)
-            _LOGGER.log(
-                CALC_LEVEL,
-                "Verlust gelernt: Vorgabe %s W, gemeldet %.0f W -> Offset %.1f W",
-                soll,
-                gemeldet,
-                self._loss_offset,
-            )
-            return 0.0
-
-        erwartet = soll - self._loss_offset
-        fehlend = erwartet - gemeldet
-        if fehlend >= schwelle:
-            return fehlend
-
-        # Plausibel: Offset nachfuehren (gleitender Mittelwert).
-        self._loss_offset = 0.8 * self._loss_offset + 0.2 * max(0.0, soll - gemeldet)
-        _LOGGER.log(
-            CALC_LEVEL,
-            "Geraet liefert %.0f W bei Vorgabe %s W (erwartet %.0f W, "
-            "Offset %.1f W)",
-            gemeldet,
-            soll,
-            erwartet,
-            self._loss_offset,
-        )
-        return 0.0
-
-    def _regulate(self, export: bool) -> None:
-        """Einen Regelschritt ausfuehren und das Kommando senden."""
         ctrl = self.states[GRP_ENERGY_CONTROL]
 
         # Stillgelegt: nur den Passive-Modus halten, nicht regeln.
@@ -1382,6 +1328,7 @@ class Bridge:
             return
 
         vorher = int(ctrl.get("regulation_output") or 0)
+        export = mittel < self.s.self_regulation_band_low
 
         if export:
             out = self._compute_regulation_output(
@@ -1419,8 +1366,6 @@ class Bridge:
         if self._apply_mode(refresh=False):
             self._cycle_mean = mittel
             self._cycle_delta = out - vorher
-            if export:
-                self._export_done = True
         else:
             _LOGGER.warning(
                 "Sollwert %s W konnte nicht gesendet werden - zurueck auf %s W",
@@ -1633,7 +1578,6 @@ class Bridge:
         step = self._group_refresh_steps()[suffix]
         group = suffix.split("/", 1)[0]
         _LOGGER.info("Manuelle Abfrage: %s", GROUP_TITLES[group])
-        self._wait_for_write_quiet()
         if step():
             self._set_communication(True)
 
@@ -1651,10 +1595,30 @@ class Bridge:
         self._run_due_polls()
 
         self._check_stuck_recovery()
-        self._check_export()
         self._passive_cycle()
         self._check_regulation_timeout()
         self._sleep(0.2)
+
+    def _regulation_busy(self) -> bool:
+        """True, wenn eine Statusabfrage gerade stoeren wuerde.
+
+        Frei ist das Fenster zwischen dem Kommando und dem Beginn des
+        Mittelungsfensters. Danach sammelt die Bridge die Messwerte fuer den
+        naechsten Takt und fragt kurz davor selbst den Geraetestatus ab - dort
+        hat nichts anderes Platz.
+        """
+        if not self._regulation_active():
+            return False
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        if ctrl.get("applied_mode") != MODE_PASSIVE:
+            return False
+        interval = self._keepalive_interval()
+        if interval <= 0:
+            return False
+        frei_bis = (
+            interval - self.s.self_regulation_average_window - self._cycle_reserve()
+        )
+        return time.monotonic() - self._last_passive_push >= frei_bis
 
     def _poll_jobs(self) -> list[tuple[str, int, Callable[[], bool]]]:
         """Die einzeln taktbaren Abfragen samt ihrem Intervall.
@@ -1701,28 +1665,14 @@ class Bridge:
             last = self._poll_last.get(name, 0.0)
             if now - last < interval:
                 continue
-            # Direkt nach einem Schreibkommando ist der Speicher beschaeftigt.
-            # Die Abfrage wird verschoben - aber nur so lange, bis sie das
-            # Doppelte ihres Intervalls ueberfaellig ist, damit sie bei dichtem
-            # Regeltakt nicht dauerhaft verhungert.
-            # Waehrend die Regelung arbeitet, rechnet das Geraet selbst an der
-            # neuen Vorgabe und antwortet oft gar nicht mehr. Die Werte waeren
-            # in dieser Zeit ohnehin nur Momentaufnahmen eines Uebergangs.
+            # Abfragen laufen im freien Fenster zwischen Kommando und
+            # Mittelungsfenster. Verschoben wird aber nur so lange, bis die
+            # Abfrage das Doppelte ihres Intervalls ueberfaellig ist - sonst
+            # wuerde sie bei kurzem Regeltakt dauerhaft verhungern.
             if self._regulation_busy() and now - last < interval * 2:
                 self._log_quiet(
                     "Abfrage %s verschoben - die Regelung arbeitet gerade",
                     name,
-                )
-                return
-
-            remaining = self._write_quiet_remaining()
-            if remaining > 0 and now - last < interval * 2:
-                _LOGGER.log(
-                    CALC_LEVEL,
-                    "Abfrage %s verschoben, noch %.1fs Ruhezeit nach dem "
-                    "letzten Schreibkommando",
-                    name,
-                    remaining,
                 )
                 return
 
@@ -1735,7 +1685,6 @@ class Bridge:
     def _poll(self) -> None:
         """Alle Abfragen einmal ausfuehren (Button *Refresh data*)."""
         _LOGGER.debug("Vollstaendige Abfrage aller Gruppen")
-        self._wait_for_write_quiet()
         steps: list[Callable[[], bool]] = [
             self._step_battery,
             self._step_pv,
@@ -1761,54 +1710,6 @@ class Bridge:
     # =================================================================
     # Hilfsfunktionen
     # =================================================================
-    def _note_write(self) -> None:
-        """Zeitpunkt des letzten Schreibkommandos merken.
-
-        Direkt nach einem ES.SetMode (und den uebrigen Set-Befehlen) ist der
-        Speicher ein paar Sekunden beschaeftigt und laesst Statusabfragen ins
-        Leere laufen. Waehrend dieser Ruhezeit wird nicht abgefragt.
-        """
-        self._last_write = time.monotonic()
-
-    def _regulation_busy(self) -> bool:
-        """True, wenn eine Statusabfrage gerade stoeren wuerde.
-
-        Zwischen zwei Regeltakten gibt es ein ruhiges Fenster: nicht direkt
-        nach einem Kommando (da rechnet das Geraet an der neuen Vorgabe) und
-        nicht kurz davor (da sammelt die Bridge die Messwerte fuer den
-        Mittelwert). Dazwischen stoert eine Abfrage niemanden.
-        """
-        if not self._regulation_active():
-            return False
-        ctrl = self.states[GRP_ENERGY_CONTROL]
-        if ctrl.get("applied_mode") != MODE_PASSIVE:
-            return False
-        interval = self._keepalive_interval()
-        if interval <= 0:
-            return False
-        seit = time.monotonic() - self._last_passive_push
-        if seit < self.s.poll_quiet_after_write:
-            return True
-        # Das Mittelungsfenster vor dem naechsten Takt frei halten.
-        return interval - seit < self.s.self_regulation_average_window + 1.0
-
-    def _write_quiet_remaining(self) -> float:
-        quiet = self.s.poll_quiet_after_write
-        if quiet <= 0 or self._last_write <= 0:
-            return 0.0
-        return max(0.0, quiet - (time.monotonic() - self._last_write))
-
-    def _wait_for_write_quiet(self) -> None:
-        """Vor einer angeforderten Abfrage die Ruhezeit abwarten."""
-        remaining = self._write_quiet_remaining()
-        if remaining > 0:
-            _LOGGER.log(
-                CALC_LEVEL,
-                "Warte %.1fs Ruhezeit nach dem letzten Schreibkommando",
-                remaining,
-            )
-            self._sleep_with_commands(remaining)
-
     def _query(
         self,
         method: str,

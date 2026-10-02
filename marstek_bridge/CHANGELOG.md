@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.5 - 2026-10-02
+
+- **Fix beim Timing:** Das Kommando geht jetzt puenktlich zum Regeltakt raus.
+  Die Abfrage davor kostet Zeit (Mindestpause plus Antwort); der Takt startet
+  um genau diese Reserve frueher. Bisher schob sich jeder Takt um die Dauer der
+  Abfrage nach hinten - aus 10 Sekunden wurden 11 bis 12, womit die Marge zur
+  `cd_time` schrumpfte.
+- `poll_quiet_after_write` entfaellt. Andere Abfragen laufen im freien Fenster
+  zwischen Kommando und Mittelungsfenster.
+- Die Einspeise-Korrektur ist kein eigener Pfad mehr: Der Regeltakt entscheidet
+  anhand des Mittelwerts, ob mit voller Verstaerkung plus Aufschlag oder
+  gedaempft korrigiert wird. Damit entfaellt auch die Begrenzung auf eine
+  Einspeise-Korrektur je Takt.
+- Warnung beim Start, wenn `self_regulation_gain` nicht zum Regeltakt passt.
+  Richtwert ist `Takt / 20s`, weil das Geraet rund 20 Sekunden bis zum
+  Einschwingen braucht.
+
 ## 0.1.4 - 2026-10-02
 
 - Die Erkennung einer eigenmaechtigen Leistungsreduktion arbeitet jetzt mit
