@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6 - 2026-10-02
+
+- **Fix:** `_check_device_output` fehlte, wodurch die Hauptschleife bei jedem
+  Regeltakt mit einem AttributeError abbrach. Die Methode war beim Entfernen
+  der Schreib-Ruhezeit in 0.1.5 versehentlich mitgeloescht worden.
+- Neues Pruefskript `tools/check_self_attributes.py`: meldet jeden Zugriff auf
+  ein ``self``-Attribut, das weder als Methode noch als Zuweisung existiert.
+  Weder Ruff noch `compileall` finden so etwas - es faellt sonst erst zur
+  Laufzeit auf. Laeuft jetzt in der CI mit.
+
 ## 0.1.5 - 2026-10-02
 
 - **Fix beim Timing:** Das Kommando geht jetzt puenktlich zum Regeltakt raus.

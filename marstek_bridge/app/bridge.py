@@ -1293,6 +1293,59 @@ class Bridge:
 
         self._regulate()
 
+    def _check_device_output(self) -> float:
+        """Vergleicht die gemeldete Ausgangsleistung mit der Erwartung.
+
+        Das Geraet stellt nicht exakt den vorgegebenen Wert ein - zwischen
+        Vorgabe und ``ongrid_power`` liegt ein weitgehend konstanter Verlust
+        (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe, also absolut und
+        nicht proportional). Dieser Offset wird als gleitender Mittelwert
+        gelernt, beginnend beim ersten Messwert.
+
+        Liegt die Meldung deutlich unter ``Vorgabe - Offset``, hat das Geraet
+        seinen Ausgang eigenmaechtig reduziert. Der Anstieg an der
+        Leistungsklemme ist dann dem Speicher zuzuschreiben und nicht einem
+        Verbraucher - die Messwerte des Mittelungsfensters sind unbrauchbar.
+
+        Rueckgabe: fehlende Leistung in Watt, 0 wenn alles in Ordnung ist.
+        """
+        schwelle = self.s.self_regulation_underdelivery
+        if schwelle <= 0 or self._last_ongrid is None:
+            return 0.0
+        gemeldet = self._last_ongrid[0]
+        soll = int(self.states[GRP_ENERGY_CONTROL].get("regulation_output") or 0)
+        if soll <= 0:
+            return 0.0
+
+        if self._loss_offset is None:
+            self._loss_offset = max(0.0, soll - gemeldet)
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Verlust gelernt: Vorgabe %s W, gemeldet %.0f W -> Offset %.1f W",
+                soll,
+                gemeldet,
+                self._loss_offset,
+            )
+            return 0.0
+
+        erwartet = soll - self._loss_offset
+        fehlend = erwartet - gemeldet
+        if fehlend >= schwelle:
+            return fehlend
+
+        # Plausibel: Offset nachfuehren (gleitender Mittelwert).
+        self._loss_offset = 0.8 * self._loss_offset + 0.2 * max(0.0, soll - gemeldet)
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Geraet liefert %.0f W bei Vorgabe %s W (erwartet %.0f W, "
+            "Offset %.1f W)",
+            gemeldet,
+            soll,
+            erwartet,
+            self._loss_offset,
+        )
+        return 0.0
+
     def _regulate(self) -> None:
         """Einen Regelschritt ausfuehren und das Kommando senden.
 
