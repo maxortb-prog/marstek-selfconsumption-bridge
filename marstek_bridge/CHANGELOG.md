@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.4 - 2026-10-02
+
+- Die Erkennung einer eigenmaechtigen Leistungsreduktion arbeitet jetzt mit
+  einem **gelernten Erwartungswert** statt mit einem direkten Vergleich gegen
+  die Vorgabe. Zwischen Vorgabe und `ongrid_power` liegt ein weitgehend
+  konstanter Verlust (rund 15 W bei 130 W wie bei 300 W Vorgabe); dieser Offset
+  wird als gleitender Mittelwert gefuehrt. Damit entfaellt die Hilfsregel, dass
+  erst ab dem Dreifachen der Schwelle geprueft wird, und eine Meldung von 0 W
+  braucht keine Sonderbehandlung mehr.
+- `ES.GetStatus` laeuft jetzt **unmittelbar vor jedem Regeltakt**. Zu diesem
+  Zeitpunkt ist das Geraet auf die aktuelle Vorgabe eingeschwungen - die
+  bisherige Abfrage kurz nach dem Kommando zeigte noch den alten Zustand.
+  Solange die Selbstregelung laeuft, entfaellt dafuer das zyklische
+  `es_status`-Polling.
+- Wird eine Reduktion erkannt, wird zusaetzlich das Mittelungsfenster
+  verworfen - seine Werte sind durch den Ausfall verfaelscht.
+- Schlaegt die Abfrage fehl, wird nicht korrigiert, sondern nur der alte Wert
+  nachgesendet.
+- `self_regulation_underdelivery` steht jetzt standardmaessig auf 25 W.
+
+## 0.1.3 - 2026-10-02
+
+- Neue Option `self_regulation_underdelivery` (Standard 0 = aus): Meldet das
+  Geraet ueber `ongrid_power` weniger Leistung als befohlen, wird nicht
+  korrigiert, sondern derselbe Sollwert erneut gesendet. Bisher deutete die
+  Regelung den fehlenden Anteil als zusaetzlichen Verbrauch und legte ihn
+  obendrauf - nahm das Geraet die Leistung spaeter wieder auf, lag der Sollwert
+  genau um diesen Betrag zu hoch und es wurde eingespeist.
+- Weil `ongrid_power` im unteren Leistungsbereich unzuverlaessig ist, greift
+  die Pruefung erst ab dem Dreifachen der Schwelle als Sollwert.
+
 ## 0.1.2 - 2026-10-01
 
 - Neue Option `passive_jitter` (Standard 0 = aus): aendert den gesendeten

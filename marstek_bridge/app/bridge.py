@@ -95,6 +95,10 @@ class Bridge:
         self._cycle_mean: float | None = None
         self._cycle_delta = 0
         self._jitter_sign = 1
+        # Zuletzt gemeldete Ausgangsleistung mit Zeitstempel.
+        self._last_ongrid: tuple[float, float] | None = None
+        # Gelernter Verlust zwischen Vorgabe und gemeldeter Ausgangsleistung.
+        self._loss_offset: float | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -612,6 +616,9 @@ class Bridge:
             clean.get("bat_soc"),
             clean.get("offgrid_power"),
         )
+        ongrid = clean.get("ongrid_power")
+        if isinstance(ongrid, (int, float)) and not isinstance(ongrid, bool):
+            self._last_ongrid = (float(ongrid), time.monotonic())
         self._update_pv_energy(clean.get("pv_power"))
         self._publish_group(GRP_ENERGY_STATUS, ENERGY_STATUS_ENTITIES)
         return True
@@ -1228,6 +1235,39 @@ class Bridge:
             return
 
         self._export_done = False
+
+        # Unmittelbar vor dem Kommando den Zustand des Geraets lesen. Zu diesem
+        # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
+        # gehoert also zur richtigen Vorgabe - anders als eine Abfrage kurz
+        # nach dem Kommando, die noch den alten Zustand zeigt.
+        if not self._step_es_status():
+            _LOGGER.warning(
+                "ES.GetStatus vor dem Regeltakt fehlgeschlagen - keine "
+                "Korrektur, Sollwert %s W wird erneut gesendet",
+                self._effective_passive_power(),
+            )
+            self._apply_mode(refresh=False)
+            return
+
+        fehlend = self._check_device_output()
+        if fehlend > 0:
+            gemeldet = self._last_ongrid[0] if self._last_ongrid else 0.0
+            _LOGGER.warning(
+                "Geraet hat den Ausgang eigenmaechtig reduziert: gemeldet "
+                "%.0f W, erwartet %.0f W (%.0f W fehlen). Der Anstieg an der "
+                "Klemme geht auf den Speicher zurueck - keine Korrektur, "
+                "Sollwert %s W wird erneut gesendet.",
+                gemeldet,
+                gemeldet + fehlend,
+                fehlend,
+                self._effective_passive_power(),
+            )
+            self._input_samples.clear()
+            self._cycle_mean = None
+            self._cycle_delta = 0
+            self._apply_mode(refresh=False)
+            return
+
         self._regulate(export=False)
 
     def _check_export(self) -> None:
@@ -1260,6 +1300,59 @@ class Bridge:
             return
         self._regulate(export=True)
 
+    def _check_device_output(self) -> float:
+        """Vergleicht die gemeldete Ausgangsleistung mit der Erwartung.
+
+        Das Geraet stellt nicht exakt den vorgegebenen Wert ein - zwischen
+        Vorgabe und ``ongrid_power`` liegt ein weitgehend konstanter Verlust
+        (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe, also absolut und
+        nicht proportional). Dieser Offset wird als gleitender Mittelwert
+        gelernt, beginnend beim ersten Messwert.
+
+        Liegt die Meldung deutlich unter ``Vorgabe - Offset``, hat das Geraet
+        seinen Ausgang eigenmaechtig reduziert. Der Anstieg an der
+        Leistungsklemme ist dann dem Speicher zuzuschreiben und nicht einem
+        Verbraucher - die Messwerte des Mittelungsfensters sind unbrauchbar.
+
+        Rueckgabe: fehlende Leistung in Watt, 0 wenn alles in Ordnung ist.
+        """
+        schwelle = self.s.self_regulation_underdelivery
+        if schwelle <= 0 or self._last_ongrid is None:
+            return 0.0
+        gemeldet = self._last_ongrid[0]
+        soll = int(self.states[GRP_ENERGY_CONTROL].get("regulation_output") or 0)
+        if soll <= 0:
+            return 0.0
+
+        if self._loss_offset is None:
+            self._loss_offset = max(0.0, soll - gemeldet)
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Verlust gelernt: Vorgabe %s W, gemeldet %.0f W -> Offset %.1f W",
+                soll,
+                gemeldet,
+                self._loss_offset,
+            )
+            return 0.0
+
+        erwartet = soll - self._loss_offset
+        fehlend = erwartet - gemeldet
+        if fehlend >= schwelle:
+            return fehlend
+
+        # Plausibel: Offset nachfuehren (gleitender Mittelwert).
+        self._loss_offset = 0.8 * self._loss_offset + 0.2 * max(0.0, soll - gemeldet)
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Geraet liefert %.0f W bei Vorgabe %s W (erwartet %.0f W, "
+            "Offset %.1f W)",
+            gemeldet,
+            soll,
+            erwartet,
+            self._loss_offset,
+        )
+        return 0.0
+
     def _regulate(self, export: bool) -> None:
         """Einen Regelschritt ausfuehren und das Kommando senden."""
         ctrl = self.states[GRP_ENERGY_CONTROL]
@@ -1289,6 +1382,7 @@ class Bridge:
             return
 
         vorher = int(ctrl.get("regulation_output") or 0)
+
         if export:
             out = self._compute_regulation_output(
                 mittel, gain=1.0, margin_percent=self.s.self_regulation_export_margin
@@ -1571,8 +1665,14 @@ class Bridge:
         vor allem die Temperatur, ES.GetMode ist nach dem Start meist statisch
         und PV.GetStatus steckt in Teilen schon in ES.GetStatus.
         """
+        es_status = self.s.poll_interval_es_status
+        if self._regulation_active() and (
+            self.states[GRP_ENERGY_CONTROL].get("applied_mode") == MODE_PASSIVE
+        ):
+            # Wird vor jedem Regeltakt ohnehin abgefragt.
+            es_status = 0
         return [
-            ("es_status", self.s.poll_interval_es_status, self._step_es_status),
+            ("es_status", es_status, self._step_es_status),
             ("battery", self.s.poll_interval_battery, self._step_battery),
             ("pv", self.s.poll_interval_pv, self._step_pv),
             ("mode", self.s.poll_interval_mode, self._step_es_mode),

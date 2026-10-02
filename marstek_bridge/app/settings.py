@@ -79,6 +79,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_deadband": 10,
         "self_regulation_deadband_percent": 0.0,
         "self_regulation_stuck_limit": 3,
+        "self_regulation_underdelivery": 25,
         "self_regulation_input_timeout": 60,
     },
     "general_settings": {
@@ -167,6 +168,7 @@ class Settings:
     self_regulation_deadband: int = 10
     self_regulation_deadband_percent: float = 0.0
     self_regulation_stuck_limit: int = 3
+    self_regulation_underdelivery: int = 25
     self_regulation_reserve_percent: int = 0
     self_regulation_deadband_percent: int = 0
     self_regulation_stall_limit: int = 3

@@ -161,6 +161,17 @@ configuration:
       band_low: Reserve 8 plus Totband 5 heisst 13 W Netzbezug, band_low 0 plus
       Totband 5 heisst 5 W Einspeisung. Korrigiert wird danach immer auf die
       Reserve.
+      self_regulation_underdelivery: Abweichung in Watt von der erwarteten
+      Ausgangsleistung, ab der das Geraet als "hat eigenmaechtig reduziert"
+      gilt. Unmittelbar vor jedem Regeltakt fragt die Bridge ES.GetStatus ab -
+      zu dem Zeitpunkt ist das Geraet auf die aktuelle Vorgabe eingeschwungen.
+      Zwischen Vorgabe und gemeldeter Leistung liegt ein weitgehend konstanter
+      Verlust (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe), der als
+      gleitender Mittelwert gelernt wird. Liegt die Meldung deutlich unter
+      Vorgabe minus Verlust, ist der Anstieg an der Leistungsklemme dem
+      Speicher zuzuschreiben und nicht einem Verbraucher: das Mittelungsfenster
+      wird verworfen und derselbe Sollwert erneut gesendet, statt nach oben zu
+      korrigieren. 0 = aus.
       self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
       der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
       HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.

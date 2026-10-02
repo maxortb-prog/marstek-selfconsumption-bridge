@@ -96,6 +96,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `self_regulation_topic` | *(leer)* | Topic des Regelwerts (Netzleistung, Bezug positiv). Leer = `<mqtt_base_topic>/energy_control/regulation_input`. |
 | `self_regulation_reserve` | `12` | Obere Kante des Haltebands und Ziel jeder Korrektur. |
 | `self_regulation_deadband_percent` | `0.0` | Skaliert das Totband linear mit dem Sollwert (nur beim Hochregeln). `0` = aus. |
+| `self_regulation_underdelivery` | `25` | Abweichung von der erwarteten Ausgangsleistung, ab der nicht korrigiert wird. `0` = aus. |
 | `self_regulation_stuck_limit` | `3` | Kommandos ohne Reaktion, bis das Regelsignal als unbrauchbar gilt. `0` = aus. |
 | `self_regulation_band_low` | `0` | Untere Kante des Haltebands. Darunter wird zurückgeregelt. |
 | `self_regulation_base_load` | `0` | Grundlast der Phase als **Untergrenze** für den Sollwert. `0` = aus. |
@@ -193,6 +194,53 @@ gesendet: 148, 152, 148, 152, ...
 Betroffen ist nur der gesendete Wert. Der interne Sollwert und damit die
 gesamte Regelrechnung bleiben unberührt, und im Mittelungsfenster hebt sich der
 Wechsel ohnehin auf. Bei einem Sollwert von 0 W wird nicht gewechselt.
+
+### Wenn das Gerät weniger liefert als befohlen
+
+Das Gerät reduziert seinen Ausgang zeitweise selbstständig. Für die Regelung
+sieht das aus wie zusätzlicher Verbrauch: Der Netzwert steigt, also wird nach
+oben korrigiert. Nimmt das Gerät seine Leistung später wieder auf, liegt der
+Sollwert um genau diesen Betrag zu hoch - und es wird eingespeist.
+
+**Unmittelbar vor jedem Regeltakt** fragt die Bridge deshalb `ES.GetStatus` ab.
+Zu diesem Zeitpunkt ist das Gerät auf die aktuelle Vorgabe eingeschwungen, die
+Meldung gehört also zur richtigen Vorgabe. Eine Abfrage kurz *nach* dem
+Kommando würde noch den alten Zustand zeigen. Solange die Selbstregelung läuft,
+entfällt dafür das zyklische `es_status`-Polling.
+
+**Der Verlust wird gelernt.** Das Gerät stellt nicht exakt den vorgegebenen
+Wert ein - zwischen Vorgabe und `ongrid_power` liegt ein weitgehend konstanter
+Abstand:
+
+| Vorgabe | gemeldet | Verlust |
+|---|---|---|
+| 130 W | 115 W | 15 W |
+| 300 W | 285 W | 15 W |
+
+Absolut, nicht proportional. Die Bridge führt diesen Offset als gleitenden
+Mittelwert nach, beginnend beim ersten Messwert. Erwartet wird dann
+`Vorgabe − Offset`.
+
+**Erkennung und Reaktion.** Liegt die Meldung mehr als `underdelivery` Watt
+unter der Erwartung, hat das Gerät eigenmächtig reduziert. Dann wird das
+Mittelungsfenster verworfen - seine Werte sind verfälscht - und derselbe
+Sollwert erneut gesendet, was zugleich der Versuch ist, das Gerät wieder auf
+die Vorgabe zu bringen:
+
+```
+CALC     Geraet liefert 115 W bei Vorgabe 130 W (erwartet 116 W, Offset 14.4 W)
+WARNING  Geraet hat den Ausgang eigenmaechtig reduziert: gemeldet 60 W,
+         erwartet 108 W (48 W fehlen). Der Anstieg an der Klemme geht auf den
+         Speicher zurueck - keine Korrektur, Sollwert 123 W wird erneut gesendet.
+```
+
+Eine Meldung von 0 W bedeutet, dass das Gerät innerhalb des Taktes bereits
+abgeschaltet hat - sie wird als sehr große Abweichung erkannt und braucht keine
+Sonderbehandlung.
+
+**Schlägt die Abfrage fehl**, wird ebenfalls nicht korrigiert, sondern nur der
+alte Wert nachgesendet. Ohne verlässliche Auskunft über den Zustand des Geräts
+ist Stillhalten die sichere Wahl.
 
 ### Statusabfragen
 
