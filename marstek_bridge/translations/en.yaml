@@ -91,6 +91,13 @@ configuration:
       every keepalive is a write command that keeps the battery busy, making it
       slower to answer status queries and control commands. The timer is reset
       by every passive command sent, including a control correction.
+      passive_jitter: alternately raises and lowers the transmitted power
+      value by this amount. The device apparently watches whether anything is
+      happening on its input and ramps the power back to 0 after one or two
+      minutes without a detectable change - which is exactly what happens with
+      a constant base load. Alternating by one or two watts keeps that
+      detection awake. Only the transmitted value is affected; the internal
+      setpoint and the control calculation stay untouched. 0 = off.
       self_regulation_enabled: initial state of the self-regulation. While
       active, the power sent is derived from the MQTT control value and the
       "Passive power" number entity only acts as the upper limit.

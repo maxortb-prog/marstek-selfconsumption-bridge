@@ -94,6 +94,7 @@ class Bridge:
         # Bridge, ob der Sensor ueberhaupt noch reagiert.
         self._cycle_mean: float | None = None
         self._cycle_delta = 0
+        self._jitter_sign = 1
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -744,6 +745,26 @@ class Bridge:
         self._publish_state(GRP_SYSTEM)
         return True
 
+    def _with_jitter(self, power: int) -> int:
+        """Den gesendeten Wert abwechselnd minimal anheben und absenken.
+
+        Das Geraet ueberwacht offenbar selbst, ob sich am Eingang etwas tut,
+        und faehrt die Leistung nach ein bis zwei Minuten ohne erkennbare
+        Aenderung auf 0 zurueck. Bei konstanter Grundlast - niemand zuhause,
+        50 W Dauerverbrauch - passiert genau das. Ein Wechsel um wenige Watt
+        haelt die Erkennung wach.
+
+        Betroffen ist nur der gesendete Wert. Der interne Sollwert und damit
+        die gesamte Regelrechnung bleiben unberuehrt; im Mittelungsfenster
+        hebt sich der Wechsel ohnehin auf.
+        """
+        jitter = self.s.passive_jitter
+        if jitter <= 0 or power <= 0:
+            return power
+        self._jitter_sign = -self._jitter_sign
+        cap = self._current_cap()
+        return int(max(0, min(cap, power + jitter * self._jitter_sign)))
+
     def _build_mode_config(self, mode: str) -> dict[str, Any]:
         ctrl = self.states[GRP_ENERGY_CONTROL]
         if mode == MODE_AUTO:
@@ -758,7 +779,7 @@ class Bridge:
             return {
                 "mode": MODE_PASSIVE,
                 "passive_cfg": {
-                    "power": self._effective_passive_power(),
+                    "power": self._with_jitter(self._effective_passive_power()),
                     "cd_time": cd,
                 },
             }

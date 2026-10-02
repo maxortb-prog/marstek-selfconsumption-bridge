@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 - 2026-10-01
+
+- Neue Option `passive_jitter` (Standard 0 = aus): aendert den gesendeten
+  Leistungswert abwechselnd um wenige Watt nach oben und unten. Das Geraet
+  faehrt die Leistung offenbar nach ein bis zwei Minuten ohne erkennbare
+  Aenderung am Eingang selbst auf 0 zurueck - bei konstanter Grundlast ohne
+  Lastwechsel passiert das regelmaessig. Betroffen ist nur der gesendete Wert,
+  der interne Sollwert und die Regelrechnung bleiben unberuehrt.
+
 ## 0.1.1 - 2026-10-01
 
 - **Fix:** `self_regulation_export_margin` bezieht sich jetzt auf die

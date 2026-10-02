@@ -86,6 +86,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_power_default` | `0` | Startwert der Number-Entity. |
 | `passive_cd_time_max` | `300` | Maximaler Countdown in Sekunden. |
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
+| `passive_jitter` | `0` | Wechselt den gesendeten Wert um ±diesen Betrag, damit das Gerät nicht selbst abschaltet. `0` = aus. |
 | `passive_keepalive_interval` | `0.0` | Abstand zwischen zwei Keepalives in Sekunden. `0` = halbe `cd_time`. |
 | `passive_keepalive` | `false` | Sendet den Passive-Befehl automatisch alle `cd_time/2` Sekunden erneut, solange Passive aktiv ist. Bei aktiver Selbstregelung passiert das ohnehin immer. |
 | `self_regulation_enabled` | `false` | Startzustand der Selbstregelung (auch als Switch in HA). |
@@ -172,6 +173,26 @@ Und höchstens einmal je Takt: Das Fenster ist nach wenigen Sekunden wieder
 voll, das Gerät hat zu dem Zeitpunkt aber noch nicht einmal angefangen zu
 reagieren. Ohne diese Sperre würde die Bridge im Sekundentakt nachsetzen und
 den Sollwert weit unter den nötigen Wert treiben.
+
+### Eigenabschaltung des Geräts
+
+Das Gerät überwacht offenbar selbst, ob sich an seinem Eingang etwas tut, und
+fährt die Leistung nach ein bis zwei Minuten ohne erkennbare Änderung auf 0
+zurück - unabhängig von `cd_time` und Keepalive. Im Alltag fällt das nicht auf,
+weil ständig Verbraucher schalten. Bei konstanter Grundlast, etwa nachts oder
+wenn niemand zuhause ist, schaltet der Speicher dagegen immer wieder ab.
+
+`passive_jitter` wechselt den gesendeten Wert deshalb abwechselnd um wenige
+Watt nach oben und unten:
+
+```
+interner Sollwert 150 W, Jitter 2 W
+gesendet: 148, 152, 148, 152, ...
+```
+
+Betroffen ist nur der gesendete Wert. Der interne Sollwert und damit die
+gesamte Regelrechnung bleiben unberührt, und im Mittelungsfenster hebt sich der
+Wechsel ohnehin auf. Bei einem Sollwert von 0 W wird nicht gewechselt.
 
 ### Statusabfragen
 

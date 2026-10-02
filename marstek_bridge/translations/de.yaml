@@ -97,6 +97,13 @@ configuration:
       auf Statusabfragen und Regelkommandos träger reagiert. Der Timer wird von
       jedem gesendeten Passive-Kommando zurückgesetzt, auch von einer
       Regelkorrektur.
+      passive_jitter: aendert den gesendeten Leistungswert abwechselnd um
+      diesen Betrag nach oben und unten. Das Geraet ueberwacht offenbar selbst,
+      ob sich am Eingang etwas tut, und faehrt die Leistung nach ein bis zwei
+      Minuten ohne erkennbare Aenderung auf 0 zurueck - bei konstanter
+      Grundlast ohne Lastwechsel passiert genau das. Ein Wechsel um ein bis
+      zwei Watt haelt die Erkennung wach. Betroffen ist nur der gesendete Wert,
+      der interne Sollwert und die Regelrechnung bleiben unberuehrt. 0 = aus.
       self_regulation_enabled: Startzustand der Selbstregelung. Ist sie aktiv,
       wird die gesendete Leistung aus dem MQTT-Regelwert berechnet und die
       Number-Entity "Passive power" dient nur noch als Obergrenze.
