@@ -7,11 +7,17 @@ from typing import Any
 
 from . import __version__
 from .const import (
+    CHARGE_INTENDED,
+    CHARGE_OFF,
+    CHARGE_UNEXPECTED,
     COMM_FAIL,
     COMM_INIT,
     COMM_OK,
     GROUP_TITLES,
     GRP_SYSTEM,
+    PLAN_LIMIT,
+    PLAN_NO_DATA,
+    PLAN_OK,
     SELECTABLE_MODES,
 )
 
@@ -574,3 +580,134 @@ class DiscoveryBuilder:
             payload.update({"payload_on": "ON", "payload_off": "OFF"})
         payload.update(ent.extra)
         return topic, payload
+
+
+# ---------------------------------------------------------------------------
+# Marstek Energy Plan - Lade- und Entladeplanung
+#
+# Diese Gruppe rechnet und meldet nur. Sie greift nicht in die Regelung ein;
+# der Deckel *Passive power* bleibt in der Hand des Benutzers oder einer
+# HA-Automation, die sich an "Required cap" orientieren kann.
+# ---------------------------------------------------------------------------
+PLAN_ENTITIES: list[Ent] = [
+    Ent(
+        "plan_status",
+        "Plan status",
+        device_class="enum",
+        icon="mdi:chart-timeline-variant",
+        extra={"options": [PLAN_OK, PLAN_LIMIT, PLAN_NO_DATA]},
+    ),
+    Ent(
+        "required_cap",
+        "Required cap",
+        device_class="power",
+        unit="W",
+        state_class="measurement",
+        icon="mdi:speedometer-slow",
+    ),
+    Ent(
+        "projected_soc",
+        "Projected SOC at PV start",
+        device_class="battery",
+        unit="%",
+        state_class="measurement",
+    ),
+    Ent(
+        "limit_reached_at",
+        "Limit reached at",
+        device_class="timestamp",
+        icon="mdi:clock-alert-outline",
+    ),
+    Ent(
+        "usable_energy",
+        "Usable energy",
+        device_class="energy_storage",
+        unit="Wh",
+        state_class="measurement",
+    ),
+    Ent("target_soc", "Target SOC", device_class="battery", unit="%", category=DIAG),
+    Ent(
+        "base_load",
+        "Base load",
+        device_class="power",
+        unit="W",
+        state_class="measurement",
+        icon="mdi:home-lightning-bolt-outline",
+    ),
+    Ent(
+        "current_load",
+        "Current load",
+        device_class="power",
+        unit="W",
+        state_class="measurement",
+        icon="mdi:home-lightning-bolt",
+    ),
+    Ent(
+        "hours_until_pv",
+        "Hours until PV",
+        unit="h",
+        state_class="measurement",
+        icon="mdi:weather-sunny",
+        category=DIAG,
+    ),
+    Ent(
+        "forecast_tomorrow",
+        "Forecast tomorrow",
+        device_class="energy",
+        unit="Wh",
+        state_class="measurement",
+        icon="mdi:solar-power-variant-outline",
+    ),
+    Ent(
+        "missing_room",
+        "Missing room",
+        device_class="energy",
+        unit="Wh",
+        state_class="measurement",
+        icon="mdi:battery-alert-variant-outline",
+    ),
+    Ent(
+        "expected_spill",
+        "Expected spill",
+        device_class="energy",
+        unit="Wh",
+        state_class="measurement",
+        icon="mdi:water-off-outline",
+    ),
+    # -- Erkennung einer Ladung aus dem Netz ---------------------------
+    Ent(
+        "charging",
+        "Charging from grid",
+        component="binary_sensor",
+        device_class="battery_charging",
+        value_template=bool_tpl("charging"),
+    ),
+    Ent(
+        "charging_type",
+        "Charging type",
+        device_class="enum",
+        icon="mdi:transmission-tower-import",
+        extra={"options": [CHARGE_OFF, CHARGE_INTENDED, CHARGE_UNEXPECTED]},
+    ),
+    Ent(
+        "charge_soc",
+        "SOC at last unexpected charge",
+        device_class="battery",
+        unit="%",
+        category=DIAG,
+    ),
+    Ent(
+        "charge_power",
+        "Power at last unexpected charge",
+        device_class="power",
+        unit="W",
+        category=DIAG,
+    ),
+    Ent(
+        "charge_since",
+        "Last unexpected charge",
+        device_class="timestamp",
+        icon="mdi:clock-outline",
+        category=DIAG,
+    ),
+]

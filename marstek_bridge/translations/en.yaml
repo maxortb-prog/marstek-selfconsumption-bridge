@@ -167,6 +167,27 @@ configuration:
       which the setpoint falls back to 0 W. Prevents the keepalive from
       re-sending the last value forever after a Home Assistant restart. 0 =
       off.
+  plan_settings:
+    name: Charge and discharge planning
+    description: >-
+      Projects the battery's trajectory up to the start of PV production and
+      reports it in the device group "Marstek Energy Plan". It does not
+      interfere with the control loop - the cap stays in your hands or in those
+      of a Home Assistant automation that can follow "Required cap".
+      plan_enabled: planning on or off.
+      plan_forecast_topic: topic carrying tomorrow's PV forecast in Wh. Empty =
+      <mqtt_base_topic>/energy_plan/forecast. It is only needed for reporting
+      how much room is missing in the battery.
+      plan_pv_start: time of day from which noticeable PV production can be
+      expected - not sunrise. Determines how long the energy has to last.
+      Adjust with the seasons.
+      plan_target_soc: limit below which the battery should not be discharged.
+      Once reached the device stops delivering, keeps draining itself in
+      standby and eventually recharges expensively from the grid. Choose it
+      with margin above the DOD stop.
+      plan_charge_threshold: from this power in watts a negative ongrid_power
+      counts as charging from the grid. Distinguished into intended (we
+      commanded negative power) and unexpected.
   general_settings:
     name: General
     description: >-
@@ -192,7 +213,8 @@ configuration:
     name: Logging
     description: >-
       log_level: trace logs every single UDP and MQTT packet, debug every query
-      step, calc adds the bridge's calculations on top of info (control steps
+      step, plan adds the charge and discharge planning on top of info, calc
+      adds the bridge's calculations on top of info (control steps
       with dead-time correction, keepalive, deadband, cap limits, PV energy
       counter) without the protocol noise of debug, info only the normal flow.
       log_full_line_color: on = the whole line is printed in the colour of its

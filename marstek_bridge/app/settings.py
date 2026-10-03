@@ -81,6 +81,13 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "self_regulation_underdelivery": 25,
         "self_regulation_input_timeout": 60,
     },
+    "plan_settings": {
+        "plan_enabled": True,
+        "plan_forecast_topic": "",
+        "plan_pv_start": "12:00",
+        "plan_target_soc": 20,
+        "plan_charge_threshold": 100,
+    },
     "general_settings": {
         "restore_state": True,
         "watchdog_failure_threshold": 3,

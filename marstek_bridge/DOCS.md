@@ -9,6 +9,7 @@ Die Optionen sind nach Themen gruppiert:
 | `message_settings` | Zeitverhalten der UDP-Kommunikation |
 | `additions_status_requests` | optionale Abfrage und Startwerte |
 | `passiv_mode_settings` | Grenzen und Startwerte des Passive-Modus |
+| `plan_settings` | Lade- und Entladeplanung |
 | `general_settings` | Watchdog und Betrieb |
 | `logging` | Log-Level |
 
@@ -110,7 +111,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `watchdog_failure_threshold` | `3` | Anzahl aufeinanderfolgender Watchdog-Auslösungen bzw. gescheiterter Init-Versuche, bis `/health` 503 liefert. |
 | `persist_device_info` | `true` | `device_ble_mac`/`device_type` in die Add-on-Optionen zurückschreiben. |
 | `health_port` | `8099` | Port des Health-Endpoints (muss zum `watchdog:`-Eintrag passen). |
-| `log_level` | `info` | `trace` \| `debug` \| `calc` \| `info` \| `warning` \| `error`. Siehe unten. |
+| `log_level` | `info` | `trace` \| `debug` \| `calc` \| `plan` \| `info` \| `warning` \| `error`. Siehe unten. |
 | `log_full_line_color` | `true` | Ein: die komplette Zeile erscheint in der Levelfarbe (grau/cyan/grün/gelb/rot). Aus: nur Zeitstempel, Level und Logger-Name sind farbige Akzente. |
 
 ## Selbstregelung im Passive-Modus
@@ -342,6 +343,87 @@ bedeutungslos und der gesicherte Wert die bessere Auskunft.
 Der zuletzt *aktive* Modus wird bewusst nicht wiederhergestellt: Ob das Gerät
 noch im Passive-Modus steht, weiß erst `ES.GetMode`. Die Regelung sendet
 deshalb erst wieder, wenn der Modus über Select und Apply aktiv ist.
+
+## Lade- und Entladeplanung
+
+Die Gruppe *Marstek Energy Plan* schreibt die Flugbahn des Speichers bis zum
+PV-Beginn fort. Sie **greift nicht in die Regelung ein** - der Deckel bleibt in
+deiner Hand oder in der einer HA-Automation, die sich an *Required cap*
+orientieren kann.
+
+### Was gerechnet wird
+
+```
+nutzbar       = (SOC − target_soc) × bat_cap / 100
+Required cap  = nutzbar / Stunden bis PV-Beginn
+Projected SOC = SOC − Last × Stunden / bat_cap × 100
+Missing room  = Prognose − freier Platz bei PV-Beginn
+```
+
+Die Last ist dabei der Verbrauch auf der Phase des Speichers: Netzwert von der
+Messklemme plus die Ausgangsleistung aus `ES.GetStatus`. Die **Grundlast** lernt
+die Bridge aus den Stunden zwischen 1 und 5 Uhr und glättet sie über mehrere
+Nächte; sie dient als Rückfallwert, wenn gerade keine Messung vorliegt.
+
+### Warum eine Grenze und kein Boden
+
+Erreicht der Speicher den DOD-Stopp, liefert er nichts mehr - verbraucht sich
+im Standby aber weiter und lädt sich irgendwann mit über einem Kilowatt aus dem
+Netz nach. Das ist doppelt teuer: Du kaufst Energie und schickst sie mit
+Wandlungsverlusten durch den Akku. `plan_target_soc` sollte deshalb mit Abstand
+darüber liegen, Vorschlag 20 % bei einem DOD-Stopp um 12 %.
+
+### Warum der Planer nicht pauschal drosselt
+
+Ein Budget, das die Energie gleichmäßig über die Nacht verteilt, wäre schädlich.
+Bei 4160 Wh und 90 % SOC ergäbe das einen Deckel von 166 W - ein Abend mit
+350 W Verbrauch würde dann 900 bis 1200 Wh aus dem Netz kaufen, obwohl die
+Grenze gar nicht in Gefahr ist. Von 90 % aus landet man selbst mit kräftigem
+Abend bei 22 %.
+
+Der Planer ist deshalb als **Wächter** gedacht: Er rechnet die Flugbahn fort und
+meldet `limit` nur, wenn sie tatsächlich unter die Grenze führt. Der
+Gefahrenfall ist nicht der kräftige Abend, sondern der niedrige Start nach
+trüben Tagen.
+
+### Was die Prognose bringt
+
+Nicht das Strecken der Entladung spart Energie - jede Wattstunde aus dem
+Speicher ist eine nicht gekaufte, egal wann. Verloren geht Energie nur, wenn
+mittags PV anfällt, während der Speicher schon voll ist. Dafür braucht es
+**Platz**, und den schafft nur Verbrauch:
+
+| Prognose | nötiger SOC bei PV-Beginn |
+|---|---|
+| 1 kWh | 76 % |
+| 2 kWh | 52 % |
+| 3 kWh | 28 % |
+
+Dem gegenüber steht, was das Haus über Nacht überhaupt abnehmen kann: bei 80 W
+mittlerer Last in 18 Stunden rund 35 Prozentpunkte. *Missing room* und
+*Expected spill* zeigen die Lücke täglich an - und damit, was eine in die Nacht
+verschobene Waschmaschine wert wäre.
+
+### Erkennung einer Ladung aus dem Netz
+
+Wird `ongrid_power` stärker negativ als `plan_charge_threshold`, lädt der
+Speicher aus dem Netz. Unterschieden wird:
+
+| Zustand | Bedeutung |
+|---|---|
+| `off` | keine Ladung |
+| `intended` | wir haben negative Leistung befohlen |
+| `unexpected` | das Gerät lädt von sich aus |
+
+```
+WARNING  Selbstnachladung erkannt bei SOC 9 % - Geraet laedt mit 1480 W,
+         befohlen waren 150 W
+```
+
+SOC, Leistung und Zeitpunkt des letzten unerwarteten Vorfalls bleiben als
+eigene Entities stehen. Damit lässt sich über einige Tage ausmessen, bei
+welchem SOC das Gerät tatsächlich nachzuladen beginnt - und `plan_target_soc`
+anschließend gezielt setzen statt zu schätzen.
 
 ## Eigener PV-Energiezähler
 

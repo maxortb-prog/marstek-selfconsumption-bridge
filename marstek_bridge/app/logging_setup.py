@@ -18,6 +18,10 @@ logging.addLevelName(TRACE_LEVEL, "TRACE")
 CALC_LEVEL = 15
 logging.addLevelName(CALC_LEVEL, "CALC")
 
+# Zwischen CALC und INFO: die Lade- und Entladeplanung.
+PLAN_LEVEL = 18
+logging.addLevelName(PLAN_LEVEL, "PLAN")
+
 
 def _trace(self: logging.Logger, message: str, *args, **kwargs) -> None:
     if self.isEnabledFor(TRACE_LEVEL):
@@ -36,6 +40,7 @@ LEVELS: dict[str, int] = {
     "trace": TRACE_LEVEL,
     "debug": logging.DEBUG,
     "calc": CALC_LEVEL,
+    "plan": PLAN_LEVEL,
     "info": logging.INFO,
     "warning": logging.WARNING,
     "error": logging.ERROR,
@@ -50,6 +55,7 @@ LEVEL_COLORS: dict[int, str] = {
     TRACE_LEVEL: "\033[38;5;245m",   # grau
     logging.DEBUG: "\033[36m",       # cyan
     CALC_LEVEL: "\033[38;5;213m",    # pink, auf dunklem Hintergrund gut lesbar
+    PLAN_LEVEL: "\033[38;5;117m",    # helles blau
     logging.INFO: "\033[32m",        # gruen
     logging.WARNING: "\033[33m",     # gelb
     logging.ERROR: "\033[31m",       # rot

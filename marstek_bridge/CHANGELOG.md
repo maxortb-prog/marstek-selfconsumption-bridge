@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 - 2026-10-03
+
+- **Neue Geraetegruppe *Marstek Energy Plan*** mit 17 Entities: Lade- und
+  Entladeplanung, die die Flugbahn des Speichers bis zum PV-Beginn
+  fortschreibt. Sie rechnet und meldet nur und greift nicht in die Regelung
+  ein - *Required cap* laesst sich aber direkt auf *Passive power* legen.
+- Neues Log-Level `plan` zwischen `calc` und `info`.
+- Neue Optionsgruppe `plan_settings` mit `plan_enabled`,
+  `plan_forecast_topic`, `plan_pv_start`, `plan_target_soc` und
+  `plan_charge_threshold`.
+- Die Grundlast wird aus den Stunden zwischen 1 und 5 Uhr gelernt und ueber
+  mehrere Naechte geglaettet.
+- Erkennung einer Ladung aus dem Netz mit Unterscheidung zwischen gewollt
+  (negative Leistung befohlen) und eigenmaechtig. SOC, Leistung und Zeitpunkt
+  des letzten unerwarteten Vorfalls bleiben als Entities stehen, damit sich die
+  Nachlade-Schwelle des Geraets ueber einige Tage ausmessen laesst.
+
 ## 0.1.6 - 2026-10-02
 
 - **Fix:** `_check_device_output` fehlte, wodurch die Hauptschleife bei jedem

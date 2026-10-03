@@ -55,6 +55,7 @@ GRP_ENERGY_STATUS = "energy_status"
 GRP_ENERGY_MODE = "energy_mode"
 GRP_ENERGY_CONTROL = "energy_control"
 GRP_ENERGY_METER = "energy_meter"
+GRP_ENERGY_PLAN = "energy_plan"
 
 GROUP_TITLES: dict[str, str] = {
     GRP_SYSTEM: "Marstek System",
@@ -64,6 +65,7 @@ GROUP_TITLES: dict[str, str] = {
     GRP_ENERGY_MODE: "Marstek Energy Mode",
     GRP_ENERGY_CONTROL: "Marstek Energy Control",
     GRP_ENERGY_METER: "Marstek Energy Meter",
+    GRP_ENERGY_PLAN: "Marstek Energy Plan",
 }
 
 # --------------------------------------------------------------------------
@@ -83,3 +85,13 @@ COMM_OK = "ON"
 COMM_FAIL = "FAIL"
 # Bridge startet bzw. wartet auf das Geraet - Init noch nicht durchgelaufen.
 COMM_INIT = "INIT"
+
+# Zustand der Planung
+PLAN_OK = "ok"
+PLAN_LIMIT = "limit"
+PLAN_NO_DATA = "no data"
+
+# Art einer erkannten Ladung aus dem Netz
+CHARGE_OFF = "off"
+CHARGE_INTENDED = "intended"
+CHARGE_UNEXPECTED = "unexpected"

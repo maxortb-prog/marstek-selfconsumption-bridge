@@ -172,6 +172,27 @@ configuration:
       self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
       der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
       HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.
+  plan_settings:
+    name: Lade- und Entladeplanung
+    description: >-
+      Rechnet die Flugbahn des Speichers bis zum PV-Beginn fort und meldet sie
+      in der Geraetegruppe "Marstek Energy Plan". Sie greift nicht in die
+      Regelung ein - der Deckel bleibt in deiner Hand oder in der einer
+      HA-Automation, die sich an "Required cap" orientieren kann.
+      plan_enabled: Planung ein oder aus.
+      plan_forecast_topic: Topic mit der PV-Prognose fuer morgen in Wh. Leer =
+      <mqtt_base_topic>/energy_plan/forecast. Gebraucht wird sie nur fuer die
+      Meldung, wieviel Platz im Speicher fehlt.
+      plan_pv_start: Uhrzeit, ab der mit nennenswerter PV-Leistung zu rechnen
+      ist - nicht der Sonnenaufgang. Bestimmt, wie lange die Energie reichen
+      muss. Saisonal nachziehen.
+      plan_target_soc: Grenze, unter die der Speicher nicht entladen werden
+      soll. Wird sie erreicht, liefert das Geraet nichts mehr, verbraucht sich
+      aber im Standby weiter und laedt sich irgendwann teuer aus dem Netz nach.
+      Mit Abstand ueber dem DOD-Stopp waehlen.
+      plan_charge_threshold: ab dieser Leistung in Watt gilt ein negativer
+      ongrid_power als Ladung aus dem Netz. Unterschieden wird gewollt (wir
+      haben negative Leistung befohlen) und eigenmaechtig.
   general_settings:
     name: Allgemein
     description: >-
@@ -198,7 +219,8 @@ configuration:
     name: Protokollierung
     description: >-
       log_level: trace protokolliert jedes einzelne UDP- und MQTT-Paket, debug
-      jeden Abfrageschritt, calc zeigt zusaetzlich zu info die Rechenwege der
+      jeden Abfrageschritt, plan zusaetzlich zu info die Lade- und
+      Entladeplanung, calc zeigt zusaetzlich zu info die Rechenwege der
       Bridge (Regelschritte samt Totzeit-Korrektur, Keepalive, Totband,
       Deckelgrenzen, PV-Energiezaehler) ohne das Protokoll-Rauschen von debug,
       info nur den normalen Ablauf.

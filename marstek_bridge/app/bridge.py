@@ -7,11 +7,14 @@ import logging
 import queue
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from . import __project__, __version__
 from .const import (
+    CHARGE_INTENDED,
+    CHARGE_OFF,
+    CHARGE_UNEXPECTED,
     COMM_FAIL,
     COMM_INIT,
     COMM_OK,
@@ -20,6 +23,7 @@ from .const import (
     GRP_ENERGY_CONTROL,
     GRP_ENERGY_METER,
     GRP_ENERGY_MODE,
+    GRP_ENERGY_PLAN,
     GRP_ENERGY_STATUS,
     GRP_PV,
     GRP_SYSTEM,
@@ -39,6 +43,9 @@ from .const import (
     MODE_AUTO,
     MODE_PASSIVE,
     MODE_UPS,
+    PLAN_LIMIT,
+    PLAN_NO_DATA,
+    PLAN_OK,
     SELECTABLE_MODES,
 )
 from .entities import (
@@ -46,6 +53,7 @@ from .entities import (
     ENERGY_METER_ENTITIES,
     ENERGY_MODE_ENTITIES,
     ENERGY_STATUS_ENTITIES,
+    PLAN_ENTITIES,
     SYSTEM_ENTITIES,
     DiscoveryBuilder,
     Ent,
@@ -53,7 +61,7 @@ from .entities import (
     build_pv_entities,
 )
 from .health import HealthState
-from .logging_setup import CALC_LEVEL
+from .logging_setup import CALC_LEVEL, PLAN_LEVEL
 from .mqtt_bridge import MqttBridge
 from .settings import Settings, load_state, save_state
 from .udp_client import ApiError, MarstekUdpClient, UdpError
@@ -120,6 +128,7 @@ class Bridge:
             GRP_ENERGY_MODE: {},
             GRP_ENERGY_CONTROL: {},
             GRP_ENERGY_METER: {},
+            GRP_ENERGY_PLAN: {},
         }
 
         self.udp = MarstekUdpClient(
@@ -438,6 +447,7 @@ class Bridge:
             f"{base}/{GRP_ENERGY_METER}/refresh/set",
             f"{base}/{GRP_ENERGY_CONTROL}/self_regulation/set",
             self.regulation_topic,
+            self.forecast_topic,
         ):
             self.mqtt.subscribe(topic)
 
@@ -636,6 +646,8 @@ class Bridge:
         if isinstance(ongrid, (int, float)) and not isinstance(ongrid, bool):
             self._last_ongrid = (float(ongrid), time.monotonic())
         self._update_pv_energy(clean.get("pv_power"))
+        self._check_grid_charging()
+        self._update_plan()
         self._publish_group(GRP_ENERGY_STATUS, ENERGY_STATUS_ENTITIES)
         return True
 
@@ -1554,6 +1566,222 @@ class Bridge:
             self._mark_command_sent()
 
     # =================================================================
+    # Lade- und Entladeplanung (rechnet und meldet, greift nicht ein)
+    # =================================================================
+    @property
+    def forecast_topic(self) -> str:
+        """Topic der PV-Prognose fuer morgen."""
+        custom = (self.s.plan_forecast_topic or "").strip()
+        return custom or f"{self.s.base_topic}/{GRP_ENERGY_PLAN}/forecast"
+
+    def _on_forecast_value(self, payload: str) -> None:
+        wert = self._parse_number(payload)
+        if wert is None:
+            _LOGGER.warning("PV-Prognose nicht lesbar: %r", payload[:80])
+            return
+        self.states[GRP_ENERGY_PLAN]["forecast_tomorrow"] = round(wert, 1)
+        _LOGGER.log(PLAN_LEVEL, "PV-Prognose fuer morgen: %.0f Wh", wert)
+        self._update_plan()
+
+    def _pv_start_in(self) -> float | None:
+        """Stunden bis zum naechsten PV-Beginn."""
+        try:
+            stunde, minute = (int(x) for x in self.s.plan_pv_start.split(":", 1))
+        except (ValueError, AttributeError):
+            return None
+        jetzt = datetime.now()
+        ziel = jetzt.replace(hour=stunde, minute=minute, second=0, microsecond=0)
+        if ziel <= jetzt:
+            ziel += timedelta(days=1)
+        return (ziel - jetzt).total_seconds() / 3600.0
+
+    def _house_load(self) -> float | None:
+        """Last, die der Speicher deckt: Netzwert plus seine Ausgangsleistung.
+
+        Der Netzwert kommt von der Messklemme, die Ausgangsleistung aus
+        ``ES.GetStatus``. Die Summe ist der Verbrauch auf der Phase, an der der
+        Speicher haengt - und damit die Groesse, die ueber die Entladedauer
+        entscheidet.
+        """
+        netz = self.states[GRP_ENERGY_CONTROL].get("regulation_input")
+        if netz is None or self._last_ongrid is None:
+            return None
+        return max(0.0, float(netz) + max(0.0, self._last_ongrid[0]))
+
+    def _learn_base_load(self, last: float) -> None:
+        """Grundlast aus den ruhigen Nachtstunden mitteln.
+
+        Zwischen 1 und 5 Uhr laeuft erfahrungsgemaess nur die Grundlast. Der
+        Wert wird ueber mehrere Naechte geglaettet, damit ein einzelner
+        Verbraucher ihn nicht verzerrt.
+        """
+        if not 1 <= datetime.now().hour < 5:
+            return
+        plan = self.states[GRP_ENERGY_PLAN]
+        bisher = plan.get("base_load")
+        neu = last if bisher is None else 0.95 * float(bisher) + 0.05 * last
+        plan["base_load"] = round(neu, 1)
+
+    def _check_grid_charging(self) -> None:
+        """Erkennen, ob der Speicher gerade aus dem Netz laedt.
+
+        Unterschieden wird zwischen gewollt - wir haben eine negative Leistung
+        befohlen - und eigenmaechtig. Letzteres ist der Fall, den dieser Test
+        beobachten soll: Das Geraet laedt sich nach, obwohl es entladen
+        sollte. Der SOC dieses Moments bleibt stehen, damit er spaeter
+        ablesbar ist.
+        """
+        if self._last_ongrid is None:
+            return
+        plan = self.states[GRP_ENERGY_PLAN]
+        leistung = self._last_ongrid[0]
+        schwelle = self.s.plan_charge_threshold
+        laedt = leistung <= -schwelle
+
+        if not laedt:
+            if plan.get("charging"):
+                _LOGGER.log(PLAN_LEVEL, "Ladung aus dem Netz beendet")
+            plan["charging"] = False
+            plan["charging_type"] = CHARGE_OFF
+            return
+
+        befohlen = self._effective_passive_power()
+        art = CHARGE_INTENDED if befohlen < 0 else CHARGE_UNEXPECTED
+        vorher = plan.get("charging_type")
+        plan["charging"] = True
+        plan["charging_type"] = art
+
+        if art == vorher:
+            return
+        if art == CHARGE_INTENDED:
+            _LOGGER.log(
+                PLAN_LEVEL,
+                "Gewollte Ladung aus dem Netz: %.0f W (befohlen %s W)",
+                -leistung,
+                befohlen,
+            )
+            return
+
+        soc = self.states[GRP_ENERGY_STATUS].get("bat_soc")
+        plan["charge_soc"] = soc
+        plan["charge_power"] = round(-leistung)
+        plan["charge_since"] = _utcnow()
+        _LOGGER.warning(
+            "\033[1;33mSelbstnachladung erkannt\033[0m bei SOC %s %% - Geraet "
+            "laedt mit %.0f W, befohlen waren %s W",
+            soc,
+            -leistung,
+            befohlen,
+        )
+
+    def _update_plan(self) -> None:
+        """Flugbahn des Speichers bis zum PV-Beginn fortschreiben."""
+        if not self.s.plan_enabled:
+            return
+        plan = self.states[GRP_ENERGY_PLAN]
+        status = self.states[GRP_ENERGY_STATUS]
+        soc = status.get("bat_soc")
+        kapazitaet = status.get("bat_cap")
+        stunden = self._pv_start_in()
+
+        plan["target_soc"] = self.s.plan_target_soc
+        plan["hours_until_pv"] = None if stunden is None else round(stunden, 2)
+
+        last = self._house_load()
+        if last is not None:
+            plan["current_load"] = round(last, 1)
+            self._learn_base_load(last)
+
+        if soc is None or kapazitaet is None or stunden is None or not kapazitaet:
+            plan["plan_status"] = PLAN_NO_DATA
+            self._publish_group(GRP_ENERGY_PLAN, PLAN_ENTITIES)
+            return
+
+        pro_prozent = float(kapazitaet) / 100.0
+        nutzbar = max(0.0, (float(soc) - self.s.plan_target_soc) * pro_prozent)
+        plan["usable_energy"] = round(nutzbar)
+        plan["required_cap"] = round(nutzbar / stunden) if stunden > 0 else 0
+
+        # Fortschreibung mit der zuletzt gemessenen Last; fehlt sie, mit der
+        # gelernten Grundlast.
+        rechenlast = last if last is not None else plan.get("base_load")
+        if rechenlast:
+            verbraucht = float(rechenlast) * stunden
+            projiziert = float(soc) - verbraucht / pro_prozent
+            plan["projected_soc"] = round(projiziert, 1)
+            if projiziert < self.s.plan_target_soc and float(rechenlast) > 0:
+                reicht = nutzbar / float(rechenlast)
+                plan["limit_reached_at"] = (
+                    datetime.now(UTC) + timedelta(hours=reicht)
+                ).isoformat(timespec="seconds")
+                plan["plan_status"] = PLAN_LIMIT
+            else:
+                plan["limit_reached_at"] = None
+                plan["plan_status"] = PLAN_OK
+        else:
+            plan["projected_soc"] = None
+            plan["limit_reached_at"] = None
+            plan["plan_status"] = PLAN_NO_DATA
+
+        # Platz fuer die Prognose: wieviel passt bei PV-Beginn noch hinein?
+        prognose = plan.get("forecast_tomorrow")
+        projiziert = plan.get("projected_soc")
+        if prognose is not None and projiziert is not None:
+            platz = max(0.0, (100.0 - float(projiziert)) * pro_prozent)
+            fehlt = max(0.0, float(prognose) - platz)
+            plan["missing_room"] = round(fehlt)
+            plan["expected_spill"] = round(fehlt)
+
+        self._publish_group(GRP_ENERGY_PLAN, PLAN_ENTITIES)
+        self._log_plan()
+
+    def _log_plan(self) -> None:
+        if not _LOGGER.isEnabledFor(PLAN_LEVEL):
+            return
+        plan = self.states[GRP_ENERGY_PLAN]
+        if plan.get("plan_status") == PLAN_NO_DATA:
+            self._log_quiet("Planung: noch keine ausreichenden Daten")
+            return
+        _LOGGER.log(
+            PLAN_LEVEL,
+            "SOC %s %% | Grenze %s %% | nutzbar %s Wh | Last %s W "
+            "(Grundlast %s W) | bis PV %s h",
+            self.states[GRP_ENERGY_STATUS].get("bat_soc"),
+            plan.get("target_soc"),
+            plan.get("usable_energy"),
+            plan.get("current_load"),
+            plan.get("base_load"),
+            plan.get("hours_until_pv"),
+        )
+        if plan.get("plan_status") == PLAN_LIMIT:
+            _LOGGER.log(
+                PLAN_LEVEL,
+                "Flugbahn fuehrt unter die Grenze: projiziert %s %%, erreicht "
+                "um %s | noetiger Deckel %s W, eingestellt %s W",
+                plan.get("projected_soc"),
+                plan.get("limit_reached_at"),
+                plan.get("required_cap"),
+                max(0, int(self.states[GRP_ENERGY_CONTROL].get("passive_power", 0))),
+            )
+        else:
+            _LOGGER.log(
+                PLAN_LEVEL,
+                "Flugbahn in Ordnung: projiziert %s %% bei PV-Beginn | "
+                "noetiger Deckel %s W",
+                plan.get("projected_soc"),
+                plan.get("required_cap"),
+            )
+        if plan.get("forecast_tomorrow") is not None:
+            _LOGGER.log(
+                PLAN_LEVEL,
+                "Prognose morgen %s Wh | fehlender Platz %s Wh | voraussichtlich "
+                "verschenkt %s Wh",
+                plan.get("forecast_tomorrow"),
+                plan.get("missing_room"),
+                plan.get("expected_spill"),
+            )
+
+    # =================================================================
     # MQTT-Kommandos
     # =================================================================
     def _process_commands(self) -> None:
@@ -1570,6 +1798,9 @@ class Bridge:
     def _handle_command(self, topic: str, payload: str) -> None:
         if topic == self.regulation_topic:
             self._on_regulation_value(payload)
+            return
+        if topic == self.forecast_topic:
+            self._on_forecast_value(payload)
             return
         base = self.s.base_topic
         suffix = topic[len(base) + 1 :] if topic.startswith(base) else topic
