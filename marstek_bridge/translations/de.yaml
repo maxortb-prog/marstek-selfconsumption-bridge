@@ -165,10 +165,11 @@ configuration:
       Zwischen Vorgabe und gemeldeter Leistung liegt ein weitgehend konstanter
       Verlust (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe), der als
       gleitender Mittelwert gelernt wird. Liegt die Meldung deutlich unter
-      Vorgabe minus Verlust, ist der Anstieg an der Leistungsklemme dem
-      Speicher zuzuschreiben und nicht einem Verbraucher: das Mittelungsfenster
-      wird verworfen und derselbe Sollwert erneut gesendet, statt nach oben zu
-      korrigieren. 0 = aus.
+      Vorgabe minus Verlust, wird die Korrektur ausgesetzt und derselbe
+      Sollwert erneut gesendet. Entschieden wird erst im naechsten Takt anhand
+      der Messklemme: Nur wenn der Netzbezug um die fehlende Leistung steigt,
+      war es ein echter Ausfall - sonst ein Messfehler des Geraets, das
+      gelegentlich eine unbrauchbare Null meldet. 0 = aus.
       self_regulation_input_timeout: Sekunden ohne neuen Regelwert, nach denen
       der Sollwert auf 0 W faellt. Verhindert, dass der Keepalive nach einem
       HA-Neustart endlos den letzten Wert weitersendet. 0 = aus.

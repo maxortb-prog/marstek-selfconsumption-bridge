@@ -715,6 +715,27 @@ PLAN_ENTITIES: list[Ent] = [
     ),
     # -- Erkennung einer Ladung aus dem Netz ---------------------------
     Ent(
+        "output_dropouts",
+        "Output dropouts",
+        state_class="total_increasing",
+        category=DIAG,
+        icon="mdi:power-plug-off-outline",
+    ),
+    Ent(
+        "last_dropout",
+        "Last output dropout",
+        device_class="timestamp",
+        category=DIAG,
+        icon="mdi:clock-alert",
+    ),
+    Ent(
+        "output_glitches",
+        "Reporting glitches",
+        state_class="total_increasing",
+        category=DIAG,
+        icon="mdi:alert-circle-outline",
+    ),
+    Ent(
         "charging",
         "Charging from grid",
         component="binary_sensor",

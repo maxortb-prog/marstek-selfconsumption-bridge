@@ -114,6 +114,8 @@ class Bridge:
         self._plan_day: str | None = None
         self._plan_saved = 0.0
         self._timing_warned = 0.0
+        # Verdacht auf eine Leistungsreduktion, der noch bestaetigt werden muss.
+        self._output_suspect: dict[str, float] | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -248,7 +250,7 @@ class Bridge:
                 ", ".join(skipped),
             )
 
-    PLAN_KEYS = ("base_load", "forecast_factor")
+    PLAN_KEYS = ("base_load", "forecast_factor", "output_dropouts", "output_glitches")
 
     def _restore_plan_state(self) -> None:
         """Gelernte Werte uebernehmen.
@@ -1361,19 +1363,11 @@ class Bridge:
             self._apply_mode(refresh=False)
             return
 
+        # Erst den Verdacht des letzten Takts entscheiden, dann neu pruefen.
+        self._resolve_output_suspect()
         fehlend = self._check_device_output()
         if fehlend > 0:
-            gemeldet = self._last_ongrid[0] if self._last_ongrid else 0.0
-            _LOGGER.warning(
-                "Geraet hat den Ausgang eigenmaechtig reduziert: gemeldet "
-                "%.0f W, erwartet %.0f W (%.0f W fehlen). Der Anstieg an der "
-                "Klemme geht auf den Speicher zurueck - keine Korrektur, "
-                "Sollwert %s W wird erneut gesendet.",
-                gemeldet,
-                gemeldet + fehlend,
-                fehlend,
-                self._effective_passive_power(),
-            )
+            self._note_output_suspect(fehlend)
             self._input_samples.clear()
             self._cycle_mean = None
             self._cycle_delta = 0
@@ -1814,6 +1808,71 @@ class Bridge:
         self._pv_day_start = self._pv_energy_wh
         self._forecast_today = plan.get("forecast_tomorrow")
         plan["pv_today"] = 0
+        self._save_plan_state(sofort=True)
+
+    def _note_output_suspect(self, fehlend: float) -> None:
+        """Einen Einbruch von ``ongrid_power`` vormerken, noch nicht bewerten.
+
+        Eine einzelne Null in der Geraeteantwort kann ein Messfehler sein - das
+        Geraet liefert gelegentlich einen unbrauchbaren Wert und meldet einen
+        Takt spaeter wieder normal. Entschieden wird deshalb erst im naechsten
+        Takt anhand der Messklemme: Hat der Speicher wirklich aufgehoert zu
+        liefern, muss der Netzbezug um die fehlende Leistung steigen.
+        """
+        klemme = self.states[GRP_ENERGY_CONTROL].get("regulation_input")
+        self._output_suspect = {
+            "fehlend": fehlend,
+            "gemeldet": self._last_ongrid[0] if self._last_ongrid else 0.0,
+            "klemme": float(klemme) if klemme is not None else 0.0,
+        }
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Verdacht: Geraet meldet %.0f W statt erwarteter %.0f W. Korrektur "
+            "ausgesetzt, Bewertung im naechsten Takt (Klemme steht bei %.0f W)",
+            self._output_suspect["gemeldet"],
+            self._output_suspect["gemeldet"] + fehlend,
+            self._output_suspect["klemme"],
+        )
+
+    def _resolve_output_suspect(self) -> None:
+        """Den Verdacht des letzten Takts anhand der Messklemme entscheiden."""
+        verdacht = self._output_suspect
+        if verdacht is None:
+            return
+        self._output_suspect = None
+
+        plan = self.states[GRP_ENERGY_PLAN]
+        klemme = self.states[GRP_ENERGY_CONTROL].get("regulation_input")
+        jetzt = float(klemme) if klemme is not None else 0.0
+        anstieg = jetzt - verdacht["klemme"]
+        # Die Haelfte der fehlenden Leistung reicht als Nachweis - die Klemme
+        # mittelt und der Speicher laeuft nach dem naechsten Kommando wieder an.
+        noetig = verdacht["fehlend"] * 0.5
+
+        if anstieg >= noetig:
+            plan["output_dropouts"] = int(plan.get("output_dropouts") or 0) + 1
+            plan["last_dropout"] = _utcnow()
+            _LOGGER.warning(
+                "\033[1;33mAusfall bestaetigt\033[0m: Geraet hatte %.0f W zu "
+                "wenig geliefert, der Netzbezug stieg um %.0f W (noetig waren "
+                "%.0f W). Gesamt bisher: %s",
+                verdacht["fehlend"],
+                anstieg,
+                noetig,
+                plan["output_dropouts"],
+            )
+        else:
+            plan["output_glitches"] = int(plan.get("output_glitches") or 0) + 1
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Messfehler: Geraet meldete %.0f W, der Netzbezug stieg aber "
+                "nur um %.0f W (noetig waren %.0f W) - der Speicher hat "
+                "durchgehend geliefert. Gesamt bisher: %s",
+                verdacht["gemeldet"],
+                anstieg,
+                noetig,
+                plan["output_glitches"],
+            )
         self._save_plan_state(sofort=True)
 
     def _update_plan(self) -> None:
