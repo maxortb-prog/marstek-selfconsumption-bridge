@@ -150,6 +150,25 @@ Gemittelt wird nur über Werte, die **nach dem letzten Kommando** eingetroffen
 sind. Solange das Fenster nicht voll ist, wird nicht gerechnet - während das
 Gerät noch auf die alte Vorgabe hinläuft, ist ein Messwert nichts wert.
 
+**Die `cd_time` muss zum Takt passen.** Das Gerät fällt aus dem Passive-Modus,
+wenn länger als `cd_time` kein Kommando kommt. Liegt der Takt dicht darunter,
+reicht ein einzelner verlorener UDP-Frame - der nächste Versuch braucht ein
+paar Sekunden, und die Frist ist abgelaufen:
+
+```
+WARNING  Knappes Timing: Regeltakt 10s bei cd_time 10s - nur 0s Reserve.
+         Ein einzelnes verlorenes Kommando wirft das Geraet aus dem
+         Passive-Modus. Empfehlung: cd_time auf mindestens 20s, oder
+         request_retries auf 1
+```
+
+Die Warnung erscheint, sobald die `cd_time` kleiner ist als das Doppelte des
+Takts. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
+*Passive cd time*, nicht gegen `passive_cd_time_default` - der kann durch
+`restore_state` oder eine Änderung zur Laufzeit davon abweichen. Deshalb läuft
+die Prüfung beim Start, bei jeder Änderung der `cd_time` und darüber hinaus
+alle zehn Minuten.
+
 **Die Verstärkung muss zum Takt passen.** Das Gerät braucht rund 10 Sekunden
 Totzeit und weitere 10 bis 15 Sekunden Rampe. Bei einem Takt von 20 Sekunden
 misst die Bridge in den Sekunden 15 bis 20, also bei etwa 85 Prozent der
@@ -265,6 +284,25 @@ Mittelungsfenster. Eine Abfrage, die das Doppelte ihres Intervalls überfällig
 ist, läuft trotzdem - sie kann nicht verhungern. Bei kurzem Takt bleibt
 allerdings kaum Platz: Bei 10 Sekunden Takt, 5 Sekunden Fenster und 2 Sekunden
 Reserve sind es gerade drei Sekunden.
+
+**Die `cd_time` muss zum Takt passen.** Das Gerät fällt aus dem Passive-Modus,
+wenn länger als `cd_time` kein Kommando kommt. Liegt der Takt dicht darunter,
+reicht ein einzelner verlorener UDP-Frame - der nächste Versuch braucht ein
+paar Sekunden, und die Frist ist abgelaufen:
+
+```
+WARNING  Knappes Timing: Regeltakt 10s bei cd_time 10s - nur 0s Reserve.
+         Ein einzelnes verlorenes Kommando wirft das Geraet aus dem
+         Passive-Modus. Empfehlung: cd_time auf mindestens 20s, oder
+         request_retries auf 1
+```
+
+Die Warnung erscheint, sobald die `cd_time` kleiner ist als das Doppelte des
+Takts. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
+*Passive cd time*, nicht gegen `passive_cd_time_default` - der kann durch
+`restore_state` oder eine Änderung zur Laufzeit davon abweichen. Deshalb läuft
+die Prüfung beim Start, bei jeder Änderung der `cd_time` und darüber hinaus
+alle zehn Minuten.
 
 **Die Verstärkung muss zum Takt passen.** Das Gerät braucht rund 20 Sekunden
 bis zum Einschwingen. Ist der Takt kürzer, wird mehrfach auf denselben Fehler

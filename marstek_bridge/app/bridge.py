@@ -113,6 +113,7 @@ class Bridge:
         self._pv_day_start: float | None = None
         self._plan_day: str | None = None
         self._plan_saved = 0.0
+        self._timing_warned = 0.0
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -407,21 +408,7 @@ class Bridge:
                     empfohlen,
                 )
 
-        keepalive = self.s.passive_keepalive_interval
-        if keepalive > 0:
-            cd = self.s.passive_cd_time_default
-            _LOGGER.info(
-                "Passive-Keepalive alle %.0fs (cd_time %ss)", keepalive, cd
-            )
-            if keepalive >= cd:
-                _LOGGER.warning(
-                    "passive_keepalive_interval (%.0fs) ist nicht kleiner als "
-                    "die cd_time (%ss) - der Countdown des Geraets kann "
-                    "zwischendurch ablaufen und der Passive-Modus endet. "
-                    "Empfehlung: deutlich darunter bleiben, etwa ein Drittel",
-                    keepalive,
-                    cd,
-                )
+        self._check_cycle_timing("beim Start")
 
         if not self._connect_mqtt_blocking():
             return
@@ -1285,6 +1272,42 @@ class Bridge:
             interval = cd / 2.0
         return max(1.0, interval)
 
+    def _check_cycle_timing(self, grund: str = "") -> None:
+        """Pruefen, ob zwischen Regeltakt und cd_time genug Reserve liegt.
+
+        Das Geraet faellt aus dem Passive-Modus, wenn laenger als ``cd_time``
+        kein Kommando kommt. Liegt der Takt dicht darunter, reicht ein
+        einzelner verlorener UDP-Frame: Der naechste Versuch braucht ein paar
+        Sekunden, und die Frist ist abgelaufen.
+
+        Geprueft wird gegen die **tatsaechlich eingestellte** cd_time aus der
+        Number-Entity, nicht gegen den Konfigurationswert - der kann durch
+        ``restore_state`` oder eine Aenderung zur Laufzeit davon abweichen.
+        Deshalb laeuft die Pruefung auch nicht nur beim Start.
+        """
+        ctrl = self.states[GRP_ENERGY_CONTROL]
+        cd = int(ctrl.get("passive_cd_time", self.s.passive_cd_time_default) or 0)
+        takt = self._keepalive_interval()
+        if cd <= 0 or takt <= 0:
+            return
+        if cd >= 2 * takt:
+            return
+        jetzt = time.monotonic()
+        if not grund and jetzt - self._timing_warned < 600:
+            return
+        self._timing_warned = jetzt
+        _LOGGER.warning(
+            "Knappes Timing%s: Regeltakt %.0fs bei cd_time %ss - nur %.0fs "
+            "Reserve. Ein einzelnes verlorenes Kommando wirft das Geraet aus "
+            "dem Passive-Modus. Empfehlung: cd_time auf mindestens %.0fs, "
+            "oder request_retries auf 1",
+            f" ({grund})" if grund else "",
+            takt,
+            cd,
+            cd - takt,
+            2 * takt,
+        )
+
     def _cycle_reserve(self) -> float:
         """Zeit, die die Abfrage vor dem Kommando braucht.
 
@@ -1978,6 +2001,7 @@ class Bridge:
                 0, min(self.s.passive_cd_time_max, value)
             )
             self._publish_state(GRP_ENERGY_CONTROL)
+            self._check_cycle_timing("cd_time geaendert")
         elif suffix == f"{GRP_ENERGY_CONTROL}/self_regulation/set":
             self._set_self_regulation(payload.strip().upper() == "ON")
         elif suffix == f"{GRP_ENERGY_CONTROL}/apply/set":
@@ -2020,6 +2044,7 @@ class Bridge:
         self._run_due_polls()
 
         self._check_stuck_recovery()
+        self._check_cycle_timing()
         self._passive_cycle()
         self._check_regulation_timeout()
         self._sleep(0.2)

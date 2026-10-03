@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 - 2026-10-03
+
+- **Fix:** Die Warnung zum Keepalive-Timing verglich gegen
+  `passive_cd_time_default` aus der Konfiguration statt gegen die tatsaechlich
+  eingestellte `cd_time` der Entity. Wich diese ab - durch `restore_state` oder
+  eine Aenderung zur Laufzeit - schwieg die Warnung, obwohl Takt und Frist
+  gleich gross waren.
+- Die Pruefung laeuft jetzt beim Start, bei jeder Aenderung der `cd_time` und
+  darueber hinaus alle zehn Minuten. Sie warnt, sobald die `cd_time` kleiner
+  ist als das Doppelte des Regeltakts - vorher erst bei Gleichstand, was zu
+  spaet war: Bei Takt 10 s und `cd_time` 10 s bleibt keine Sekunde Reserve, und
+  ein einzelner verlorener UDP-Frame wirft das Geraet aus dem Passive-Modus.
+
 ## 0.2.1 - 2026-10-03
 
 - **Gelernte Werte ueberleben jetzt Neustarts**: Grundlast, Prognose-Faktor und
