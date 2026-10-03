@@ -107,6 +107,12 @@ class Bridge:
         self._last_ongrid: tuple[float, float] | None = None
         # Gelernter Verlust zwischen Vorgabe und gemeldeter Ausgangsleistung.
         self._loss_offset: float | None = None
+        # Geglaettete Last fuer die Flugbahn und Tagesbuchhaltung der Prognose.
+        self._load_samples: list[tuple[float, float]] = []
+        self._forecast_today: float | None = None
+        self._pv_day_start: float | None = None
+        self._plan_day: str | None = None
+        self._plan_saved = 0.0
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -164,6 +170,7 @@ class Bridge:
         self._regulation_seed_pending = bool(settings.restore_state)
         if settings.restore_state:
             self._restore_control_state()
+            self._restore_plan_state()
 
         self.states[GRP_SYSTEM].update(
             {
@@ -239,6 +246,53 @@ class Bridge:
                 "Aus der Konfiguration uebernommen (dort geaendert): %s",
                 ", ".join(skipped),
             )
+
+    PLAN_KEYS = ("base_load", "forecast_factor")
+
+    def _restore_plan_state(self) -> None:
+        """Gelernte Werte uebernehmen.
+
+        Grundlast und Prognose-Faktor brauchen Naechte beziehungsweise Tage,
+        bis sie stehen - die nach jedem Neustart neu zu lernen waere unnoetig.
+        Der Verlust-Offset ist schneller wieder da, kostet aber auch nichts.
+        """
+        gespeichert = load_state().get("plan")
+        if not isinstance(gespeichert, dict):
+            return
+        plan = self.states[GRP_ENERGY_PLAN]
+        uebernommen: list[str] = []
+        for key in self.PLAN_KEYS:
+            if gespeichert.get(key) is not None:
+                plan[key] = gespeichert[key]
+                uebernommen.append(f"{key}={gespeichert[key]}")
+        if gespeichert.get("loss_offset") is not None:
+            self._loss_offset = float(gespeichert["loss_offset"])
+            uebernommen.append(f"loss_offset={self._loss_offset:.1f}")
+        for feld in ("forecast_today", "pv_day_start", "plan_day"):
+            if gespeichert.get(feld) is not None:
+                setattr(self, f"_{feld}", gespeichert[feld])
+        if uebernommen:
+            _LOGGER.info("Planungsdaten wiederhergestellt: %s", ", ".join(uebernommen))
+
+    def _save_plan_state(self, sofort: bool = False) -> None:
+        """Gelernte Werte sichern, hoechstens alle fuenf Minuten."""
+        if not self.s.restore_state:
+            return
+        if not sofort and time.monotonic() - self._plan_saved < 300:
+            return
+        self._plan_saved = time.monotonic()
+        plan = self.states[GRP_ENERGY_PLAN]
+        save_state(
+            {
+                "plan": {
+                    **{k: plan.get(k) for k in self.PLAN_KEYS},
+                    "loss_offset": self._loss_offset,
+                    "forecast_today": self._forecast_today,
+                    "pv_day_start": self._pv_day_start,
+                    "plan_day": self._plan_day,
+                }
+            }
+        )
 
     def _save_control_state(self) -> None:
         if not self.s.restore_state:
@@ -1608,6 +1662,20 @@ class Bridge:
             return None
         return max(0.0, float(netz) + max(0.0, self._last_ongrid[0]))
 
+    def _load_average(self) -> float | None:
+        """Mittlere Last ueber ``plan_load_window``.
+
+        Die Flugbahn wird ueber viele Stunden fortgeschrieben - dafuer ist der
+        Momentanwert unbrauchbar. Ein Kuehlschrank, der gerade anlaeuft, wuerde
+        sonst die halbe Nacht hochgerechnet.
+        """
+        fenster = max(60, self.s.plan_load_window)
+        jetzt = time.monotonic()
+        werte = [w for t, w in self._load_samples if t >= jetzt - fenster]
+        if not werte:
+            return None
+        return sum(werte) / len(werte)
+
     def _learn_base_load(self, last: float) -> None:
         """Grundlast aus den ruhigen Nachtstunden mitteln.
 
@@ -1674,10 +1742,62 @@ class Bridge:
             befohlen,
         )
 
+    def _check_day_rollover(self) -> None:
+        """Tagesabschluss: Prognose mit der tatsaechlichen Produktion vergleichen.
+
+        Die Prognose gilt fuer den naechsten Tag. Beim Datumswechsel wird sie
+        zur Prognose des laufenden Tages und der Stand des PV-Zaehlers
+        festgehalten. Am naechsten Wechsel steht fest, was wirklich produziert
+        wurde - daraus lernt die Bridge einen Faktor.
+
+        Der Faktor fasst zwei Dinge zusammen, die sich ohnehin nicht trennen
+        lassen: wie gut die Prognose trifft und wieviel davon ueberhaupt am
+        Speicher ankommt. Genau das braucht man fuer die Platzrechnung.
+        """
+        heute = datetime.now().date().isoformat()
+        if self._plan_day == heute:
+            return
+
+        plan = self.states[GRP_ENERGY_PLAN]
+        if self._plan_day is not None and self._pv_day_start is not None:
+            produziert = max(0.0, self._pv_energy_wh - self._pv_day_start)
+            plan["pv_today"] = round(produziert)
+            prognose = self._forecast_today
+            if prognose and prognose > 100 and produziert > 100:
+                faktor = produziert / prognose * 100.0
+                bisher = plan.get("forecast_factor")
+                neu = faktor if bisher is None else 0.7 * float(bisher) + 0.3 * faktor
+                plan["forecast_factor"] = round(neu, 1)
+                _LOGGER.log(
+                    PLAN_LEVEL,
+                    "Tagesabschluss %s: Prognose %.0f Wh, produziert %.0f Wh "
+                    "-> Faktor %.0f %% (geglaettet %.0f %%)",
+                    self._plan_day,
+                    prognose,
+                    produziert,
+                    faktor,
+                    neu,
+                )
+            else:
+                _LOGGER.log(
+                    PLAN_LEVEL,
+                    "Tagesabschluss %s: produziert %.0f Wh - zu wenig Daten "
+                    "fuer einen Faktor",
+                    self._plan_day,
+                    produziert,
+                )
+
+        self._plan_day = heute
+        self._pv_day_start = self._pv_energy_wh
+        self._forecast_today = plan.get("forecast_tomorrow")
+        plan["pv_today"] = 0
+        self._save_plan_state(sofort=True)
+
     def _update_plan(self) -> None:
         """Flugbahn des Speichers bis zum PV-Beginn fortschreiben."""
         if not self.s.plan_enabled:
             return
+        self._check_day_rollover()
         plan = self.states[GRP_ENERGY_PLAN]
         status = self.states[GRP_ENERGY_STATUS]
         soc = status.get("bat_soc")
@@ -1689,8 +1809,17 @@ class Bridge:
 
         last = self._house_load()
         if last is not None:
+            jetzt = time.monotonic()
+            self._load_samples.append((jetzt, last))
+            grenze = jetzt - max(60, self.s.plan_load_window)
+            while self._load_samples and self._load_samples[0][0] < grenze:
+                self._load_samples.pop(0)
             plan["current_load"] = round(last, 1)
+            plan["load_average"] = round(self._load_average() or last, 1)
             self._learn_base_load(last)
+        plan["loss_offset"] = (
+            None if self._loss_offset is None else round(self._loss_offset, 1)
+        )
 
         if soc is None or kapazitaet is None or stunden is None or not kapazitaet:
             plan["plan_status"] = PLAN_NO_DATA
@@ -1702,9 +1831,9 @@ class Bridge:
         plan["usable_energy"] = round(nutzbar)
         plan["required_cap"] = round(nutzbar / stunden) if stunden > 0 else 0
 
-        # Fortschreibung mit der zuletzt gemessenen Last; fehlt sie, mit der
+        # Fortschreibung mit der geglaetteten Last; fehlt sie, mit der
         # gelernten Grundlast.
-        rechenlast = last if last is not None else plan.get("base_load")
+        rechenlast = plan.get("load_average") or plan.get("base_load")
         if rechenlast:
             verbraucht = float(rechenlast) * stunden
             projiziert = float(soc) - verbraucht / pro_prozent
@@ -1723,15 +1852,25 @@ class Bridge:
             plan["limit_reached_at"] = None
             plan["plan_status"] = PLAN_NO_DATA
 
+        if self._pv_day_start is not None:
+            plan["pv_today"] = round(max(0.0, self._pv_energy_wh - self._pv_day_start))
+
         # Platz fuer die Prognose: wieviel passt bei PV-Beginn noch hinein?
+        # Gerechnet wird mit der korrigierten Prognose, sofern ein Faktor
+        # gelernt wurde - die Rohprognose bleibt daneben sichtbar.
         prognose = plan.get("forecast_tomorrow")
+        faktor = plan.get("forecast_factor")
+        if prognose is not None:
+            korrigiert = float(prognose) * (float(faktor) / 100.0 if faktor else 1.0)
+            plan["forecast_corrected"] = round(korrigiert)
         projiziert = plan.get("projected_soc")
         if prognose is not None and projiziert is not None:
             platz = max(0.0, (100.0 - float(projiziert)) * pro_prozent)
-            fehlt = max(0.0, float(prognose) - platz)
+            fehlt = max(0.0, float(plan["forecast_corrected"]) - platz)
             plan["missing_room"] = round(fehlt)
             plan["expected_spill"] = round(fehlt)
 
+        self._save_plan_state()
         self._publish_group(GRP_ENERGY_PLAN, PLAN_ENTITIES)
         self._log_plan()
 
@@ -1774,9 +1913,11 @@ class Bridge:
         if plan.get("forecast_tomorrow") is not None:
             _LOGGER.log(
                 PLAN_LEVEL,
-                "Prognose morgen %s Wh | fehlender Platz %s Wh | voraussichtlich "
-                "verschenkt %s Wh",
+                "Prognose morgen %s Wh (korrigiert %s Wh, Faktor %s %%) | "
+                "fehlender Platz %s Wh | voraussichtlich verschenkt %s Wh",
                 plan.get("forecast_tomorrow"),
+                plan.get("forecast_corrected"),
+                plan.get("forecast_factor"),
                 plan.get("missing_room"),
                 plan.get("expected_spill"),
             )

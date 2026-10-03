@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1 - 2026-10-03
+
+- **Gelernte Werte ueberleben jetzt Neustarts**: Grundlast, Prognose-Faktor und
+  der Verlust-Offset des Geraets werden in `/data/marstek_state.json` gesichert.
+  Die Grundlast braeuchte sonst nach jedem Neustart eine ganze Nacht.
+- **Die Flugbahn rechnet mit einer geglaetteten Last** (neue Option
+  `plan_load_window`, Standard 15 Minuten) statt mit dem Momentanwert. Bisher
+  schwankten *Projected SOC*, *Limit reached at* und *Missing room* innerhalb
+  von Sekunden um Groessenordnungen, weil ein anlaufender Kuehlschrank ueber die
+  halbe Nacht hochgerechnet wurde.
+- **Neuer Prognose-Faktor**: Beim Tageswechsel vergleicht die Bridge die
+  Prognose des Vortags mit der tatsaechlichen Produktion aus dem eigenen
+  PV-Zaehler und lernt daraus einen Faktor. *Forecast tomorrow* bleibt die
+  Rohprognose, *Forecast corrected* zeigt den korrigierten Wert, mit dem der
+  Platzbedarf gerechnet wird.
+- Neue Entities: *Load average*, *Forecast factor*, *Forecast corrected*,
+  *PV today* und *Device loss offset*.
+
 ## 0.2.0 - 2026-10-03
 
 - **Neue Geraetegruppe *Marstek Energy Plan*** mit 17 Entities: Lade- und

@@ -181,6 +181,10 @@ configuration:
       plan_pv_start: time of day from which noticeable PV production can be
       expected - not sunrise. Determines how long the energy has to last.
       Adjust with the seasons.
+      plan_load_window: window in seconds over which the load is averaged for
+      the trajectory. The projection runs over many hours - with the
+      instantaneous value a fridge that just started would be extrapolated over
+      half the night. Affects planning only, not the control loop.
       plan_target_soc: limit below which the battery should not be discharged.
       Once reached the device stops delivering, keeps draining itself in
       standby and eventually recharges expensively from the grid. Choose it

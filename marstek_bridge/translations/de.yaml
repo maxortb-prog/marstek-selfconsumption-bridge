@@ -186,6 +186,11 @@ configuration:
       plan_pv_start: Uhrzeit, ab der mit nennenswerter PV-Leistung zu rechnen
       ist - nicht der Sonnenaufgang. Bestimmt, wie lange die Energie reichen
       muss. Saisonal nachziehen.
+      plan_load_window: Fenster in Sekunden, ueber das die Last fuer die
+      Flugbahn gemittelt wird. Die Fortschreibung laeuft ueber viele Stunden -
+      mit dem Momentanwert wuerde ein gerade anlaufender Kuehlschrank die halbe
+      Nacht hochgerechnet. Der Wert betrifft nur die Planung, nicht die
+      Regelung.
       plan_target_soc: Grenze, unter die der Speicher nicht entladen werden
       soll. Wird sie erreicht, liefert das Geraet nichts mehr, verbraucht sich
       aber im Standby weiter und laedt sich irgendwann teuer aus dem Netz nach.

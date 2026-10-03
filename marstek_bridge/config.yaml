@@ -1,5 +1,5 @@
 name: Marstek Self-consumption Bridge
-version: "0.2.0"
+version: "0.2.1"
 slug: marstek_bridge
 description: >-
   Marstek for Self-consumption regulation (MQTT - UDP Bridge). Steuert Marstek
@@ -85,6 +85,7 @@ options:
     plan_enabled: true
     plan_forecast_topic: ""
     plan_pv_start: "12:00"
+    plan_load_window: 900
     plan_target_soc: 20
     plan_charge_threshold: 100
   general_settings:
@@ -154,12 +155,14 @@ schema:
     plan_enabled: true
     plan_forecast_topic: ""
     plan_pv_start: "12:00"
+    plan_load_window: 900
     plan_target_soc: 20
     plan_charge_threshold: 100
   plan_settings:
     plan_enabled: bool
     plan_forecast_topic: str?
     plan_pv_start: str
+    plan_load_window: int(60,7200)
     plan_target_soc: int(0,100)
     plan_charge_threshold: int(10,5000)
   general_settings:

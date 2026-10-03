@@ -20,6 +20,6 @@ LABEL \
     io.hass.name="Marstek Self-consumption Bridge" \
     io.hass.description="Marstek for Self-consumption regulation (MQTT - UDP Bridge)" \
     io.hass.type="addon" \
-    io.hass.version="0.2.0"
+    io.hass.version="0.2.1"
 
 CMD [ "/run.sh" ]

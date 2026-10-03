@@ -361,9 +361,45 @@ Missing room  = Prognose − freier Platz bei PV-Beginn
 ```
 
 Die Last ist dabei der Verbrauch auf der Phase des Speichers: Netzwert von der
-Messklemme plus die Ausgangsleistung aus `ES.GetStatus`. Die **Grundlast** lernt
-die Bridge aus den Stunden zwischen 1 und 5 Uhr und glättet sie über mehrere
-Nächte; sie dient als Rückfallwert, wenn gerade keine Messung vorliegt.
+Messklemme plus die Ausgangsleistung aus `ES.GetStatus`.
+
+Gerechnet wird mit dem **Mittel über `plan_load_window`** (Standard 15 Minuten),
+nicht mit dem Momentanwert. Die Fortschreibung läuft über viele Stunden - ein
+gerade anlaufender Kühlschrank würde sonst die halbe Nacht hochgerechnet und
+die Flugbahn sprunghaft verändern. *Current load* zeigt weiterhin den
+Momentanwert, *Load average* den geglätteten.
+
+Die **Grundlast** lernt die Bridge aus den Stunden zwischen 1 und 5 Uhr und
+glättet sie über mehrere Nächte; sie dient als Rückfallwert, wenn gerade keine
+Messung vorliegt.
+
+### Gelernte Werte überleben Neustarts
+
+Grundlast, Prognose-Faktor und der Verlust-Offset des Geräts werden in
+`/data/marstek_state.json` unter `plan` gesichert und beim Start übernommen -
+höchstens alle fünf Minuten geschrieben, damit die Datei nicht ständig in
+Bewegung ist. Die Grundlast bräuchte sonst nach jedem Neustart eine ganze
+Nacht, der Prognose-Faktor mehrere Tage.
+
+### Prognose-Faktor
+
+Prognosen treffen selten genau, und nicht alles, was erzeugt wird, kommt im
+Speicher an - der gleichzeitige Verbrauch geht vorher ab. Beide Effekte
+zusammen fängt ein gelernter Faktor ein.
+
+Beim Datumswechsel wird die Prognose zur Prognose des laufenden Tages und der
+Stand des eigenen PV-Zählers festgehalten. Am nächsten Wechsel steht fest, was
+wirklich produziert wurde:
+
+```
+PLAN  Tagesabschluss 2026-10-02: Prognose 4406 Wh, produziert 3100 Wh
+      -> Faktor 70 % (geglaettet 70 %)
+```
+
+*Forecast tomorrow* zeigt weiterhin die Rohprognose, *Forecast corrected* den
+mit dem Faktor multiplizierten Wert. Gerechnet wird mit dem korrigierten - im
+Beispiel sinkt *Missing room* damit von 1074 Wh auf 0, weil die 4406 Wh der
+Rohprognose bei diesem Gerät realistisch 3100 Wh bedeuten.
 
 ### Warum eine Grenze und kein Boden
 
