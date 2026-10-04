@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3 - 2026-10-04
+
+- Nach einem fehlgeschlagenen Request entfaellt die Statusabfrage im naechsten
+  Regeltakt; der Sollwert wird direkt gesendet. Das Geraet ist in dem Moment
+  beschaeftigt, und das Kommando hat Vorrang - es haelt den Passive-Modus am
+  Leben, waehrend die Abfrage es nur um ihre Antwortzeit verzoegert und das
+  Geraet zusaetzlich belastet. Bei drei Sekunden Timeout geht das Kommando
+  dadurch drei Sekunden frueher raus.
+- Da jeder Fehlschlag die Marke neu setzt, wechseln sich Abfrage und reines
+  Senden ab, solange sich das Geraet schwertut.
+
 ## 0.3.2 - 2026-10-04
 
 - Der Zustand `pv` verlangt jetzt beides: Uhrzeit im Fenster **und**

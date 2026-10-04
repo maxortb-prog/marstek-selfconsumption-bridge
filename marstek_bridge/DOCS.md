@@ -273,6 +273,22 @@ Sonderbehandlung.
 alte Wert nachgesendet. Ohne verlässliche Auskunft über den Zustand des Geräts
 ist Stillhalten die sichere Wahl.
 
+**Nach jedem fehlgeschlagenen Request entfällt die Abfrage im nächsten Takt.**
+Das Gerät ist dann beschäftigt, und das Kommando hat Vorrang - es hält den
+Passive-Modus am Leben, während die Abfrage es nur um ihre Antwortzeit
+verzögern und das Gerät zusätzlich belasten würde. Bei drei Sekunden Timeout
+geht das Kommando dadurch drei Sekunden früher raus:
+
+```
+WARNING  ES.GetStatus vor dem Regeltakt fehlgeschlagen - keine Korrektur
+CALC     Letzter Request fehlgeschlagen - Abfrage uebersprungen, Sollwert
+         200 W wird direkt gesendet
+```
+
+Da jeder Fehlschlag die Marke neu setzt, entsteht ein Wechselspiel: Abfrage
+scheitert, nächster Takt nur senden, dann wieder ein Versuch. Solange sich das
+Gerät schwertut, halbiert das die Zahl der Anfragen.
+
 ### Der Zeitplan eines Regeltakts
 
 ```

@@ -134,6 +134,8 @@ class Bridge:
         self._output_suspect: dict[str, float] | None = None
         # Wann zuletzt nennenswerte PV-Leistung gemeldet wurde.
         self._pv_last_seen: float | None = None
+        # Nach einem Fehlschlag die Vorab-Abfrage einmal ueberspringen.
+        self._skip_query_once = False
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -1377,6 +1379,20 @@ class Bridge:
             self._apply_mode(refresh=False)
             return
 
+        # Nach einem Fehlschlag einen Takt lang nur senden. Die Abfrage wuerde
+        # das Kommando um ihre Antwortzeit verzoegern - und genau die fehlt,
+        # wenn das Geraet ohnehin schon nicht antwortet.
+        if self._skip_query_once:
+            self._skip_query_once = False
+            _LOGGER.log(
+                CALC_LEVEL,
+                "Letzter Request fehlgeschlagen - Abfrage uebersprungen, "
+                "Sollwert %s W wird direkt gesendet",
+                self._effective_passive_power(),
+            )
+            self._apply_mode(refresh=False)
+            return
+
         # Unmittelbar vor dem Kommando den Zustand des Geraets lesen. Zu diesem
         # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
         # gehoert also zur richtigen Vorgabe - anders als eine Abfrage kurz
@@ -2388,6 +2404,11 @@ class Bridge:
         sys_state = self.states[GRP_SYSTEM]
         sys_state["request_failures"] = int(sys_state.get("request_failures") or 0) + 1
         sys_state["last_failure"] = _utcnow()
+        # Das Geraet ist gerade beschaeftigt. Im naechsten Takt hat das
+        # Kommando Vorrang: Es haelt den Passive-Modus am Leben, waehrend die
+        # Statusabfrage es nur um ihre Antwortzeit verzoegern und das Geraet
+        # zusaetzlich belasten wuerde.
+        self._skip_query_once = True
         self._publish_state(GRP_SYSTEM)
 
     def _set_communication(self, ok: bool, reason: str | None = None) -> None:
