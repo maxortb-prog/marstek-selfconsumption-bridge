@@ -212,7 +212,19 @@ gesendet: 148, 152, 148, 152, ...
 
 Betroffen ist nur der gesendete Wert. Der interne Sollwert und damit die
 gesamte Regelrechnung bleiben unberührt, und im Mittelungsfenster hebt sich der
-Wechsel ohnehin auf. Bei einem Sollwert von 0 W wird nicht gewechselt.
+Wechsel ohnehin auf.
+
+Nicht gewechselt wird bei einem Sollwert von 0 W und **am Deckel**. Dort liegt
+die Last über dem, was der Speicher liefern darf - der Eingang schwankt also
+ohnehin kräftig, das Gerät sieht genug Bewegung. Hinzu kommt, dass die Anhebung
+am Deckel abgeschnitten würde und der Wechsel nur noch nach unten wirkte:
+
+| Sollwert | gesendet |
+|---|---|
+| 200 W (am Deckel) | 200, 200, 200, … |
+| 150 W | 147, 153, 147, … |
+| 60 W | 57, 63, 57, … |
+| 0 W | 0, 0, 0, … |
 
 ### Wenn das Gerät weniger liefert als befohlen
 
@@ -439,6 +451,44 @@ mit dem Faktor multiplizierten Wert. Gerechnet wird mit dem korrigierten - im
 Beispiel sinkt *Missing room* damit von 1074 Wh auf 0, weil die 4406 Wh der
 Rohprognose bei diesem Gerät realistisch 3100 Wh bedeuten.
 
+### Während der PV-Produktion
+
+Zwischen `plan_pv_start` und `plan_pv_end` meldet der Planer den Zustand `pv`
+und **lässt die Flugbahn aus**. Sie wäre dort ohne Aussage: Sie schreibt den
+Verbrauch bis zum nächsten PV-Beginn fort und kennt die Energie nicht, die
+gerade einlädt - um 12:36 ergäbe das eine Vorhersage über 23 Stunden mit einem
+projizierten SOC von −27 %, während der Speicher tatsächlich gerade mit 585 W
+geladen wird.
+
+*Projected SOC* und *Limit reached at* bleiben in dieser Zeit leer. *Missing
+room* dagegen wird weiter gerechnet, nur anders herum: gegen den **aktuellen**
+SOC und gegen den Teil der Prognose, der noch aussteht. Damit steht dort eine
+Live-Antwort auf die Frage, ob heute noch Energie verschenkt wird.
+
+```
+PLAN  PV-Zeitfenster (12:00 bis 18:00) - keine Flugbahn.
+      Heute bisher 900 Wh erzeugt, erwartet 2100 Wh
+```
+
+Das Fenster gehört saisonal nachgezogen - im Sommer kommt bis etwa 20 Uhr noch
+Ladung, im Herbst ist um 18 Uhr Schluss.
+
+**Die Uhrzeit allein genügt nicht.** Der Zustand `pv` verlangt zusätzlich, dass
+tatsächlich etwas ankommt - mindestens `plan_pv_min_power`. An einem trüben Tag
+bleibt die Flugbahn also erhalten, obwohl das Fenster offen ist, und das ist
+richtig: Dort sagt sie etwas aus. Nach dem letzten Messwert über der Schwelle
+läuft die Erkennung noch zehn Minuten nach, damit eine vorbeiziehende Wolke den
+Zustand nicht hin und her kippt.
+
+| Uhrzeit | letzte PV-Meldung über 50 W | Zustand `pv` |
+|---|---|---|
+| 13:30 | nie | nein |
+| 13:30 | gerade eben | ja |
+| 13:30 | vor 5 min | ja |
+| 13:30 | vor 15 min | nein |
+| 19:30 | gerade eben | nein |
+| 10:30 | gerade eben | nein |
+
 ### Warum eine Grenze und kein Boden
 
 Erreicht der Speicher den DOD-Stopp, liefert er nichts mehr - verbraucht sich
@@ -599,6 +649,29 @@ dem Speicher selbst einwandfrei läuft - eine Automation auf
 `binary_sensor.<...>_system_comm_ok` schlägt damit an. Bewegt sich der Messwert
 wieder um mehr als `settle_tolerance`, nimmt die Regelung den Betrieb auf und
 der Zustand geht zurück auf `ON`.
+
+## Was bei Timeouts passiert
+
+Der Speicher ist zeitweise so beschäftigt, dass er einzelne Anfragen gar nicht
+beantwortet. Das ist **kein Kommunikationsausfall** und wird deshalb auch nicht
+als solcher gemeldet:
+
+| Vorgang | Wirkung |
+|---|---|
+| einzelner Timeout | *Request failures* zählt hoch, *Last request failure* bekommt einen Zeitstempel. `Communication established` bleibt auf `ON`. |
+| `watchdog_failure_threshold` Fehler in Folge | erst jetzt `FAIL`, Health-Endpoint unhealthy, Neu-Initialisierung |
+| Regelsignal reagiert nicht | eigene Entity *Regulation signal* wechselt auf `stuck`, Sollwert auf 0 W. `Communication established` bleibt unberührt. |
+
+Bisher sprang `Communication established` schon beim ersten Timeout auf `FAIL`
+und beim nächsten Erfolg zurück - bei einem Gerät, das regelmäßig kurz nicht
+antwortet, flatterte die Entity dadurch ständig und war für Automationen
+unbrauchbar. Jetzt bedeutet `FAIL`, was es sagt: Das Gerät ist über mehrere
+Versuche hinweg nicht erreichbar.
+
+Für eine Automation auf „Gerät zickt" eignet sich *Request failures*: Steigt
+der Zähler über Stunden kaum, läuft alles rund; springt er in Schüben, ist der
+Speicher überlastet - dann helfen ein höheres `request_timeout` oder ein
+längerer Regeltakt.
 
 ## Abbruch der Initialisierung
 

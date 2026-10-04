@@ -85,6 +85,8 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "plan_enabled": True,
         "plan_forecast_topic": "",
         "plan_pv_start": "12:00",
+        "plan_pv_end": "18:00",
+        "plan_pv_min_power": 50,
         "plan_load_window": 900,
         "plan_target_soc": 20,
         "plan_charge_threshold": 100,

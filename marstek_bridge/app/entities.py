@@ -18,7 +18,10 @@ from .const import (
     PLAN_LIMIT,
     PLAN_NO_DATA,
     PLAN_OK,
+    PLAN_PV,
     SELECTABLE_MODES,
+    SIGNAL_OK,
+    SIGNAL_STUCK,
 )
 
 DIAG = "diagnostic"
@@ -81,6 +84,20 @@ def refresh_button(label: str) -> Ent:
 #                  + DOD / Ble_block / Led_Ctrl + Kommunikationsstatus)
 # ---------------------------------------------------------------------------
 SYSTEM_ENTITIES: list[Ent] = [
+    Ent(
+        "request_failures",
+        "Request failures",
+        state_class="total_increasing",
+        category=DIAG,
+        icon="mdi:timer-alert-outline",
+    ),
+    Ent(
+        "last_failure",
+        "Last request failure",
+        device_class="timestamp",
+        category=DIAG,
+        icon="mdi:clock-remove-outline",
+    ),
     # device_class "enum" + options: nur so kennt Home Assistant die moeglichen
     # Zustaende und bietet sie in Automationen im Dropdown an.
     Ent(
@@ -413,6 +430,14 @@ def build_control_entities(
 ) -> list[Ent]:
     return [
         Ent(
+            "regulation_signal",
+            "Regulation signal",
+            device_class="enum",
+            icon="mdi:access-point-check",
+            extra={"options": [SIGNAL_OK, SIGNAL_STUCK]},
+            category=DIAG,
+        ),
+        Ent(
             "target_mode",
             "Mode selection",
             component="select",
@@ -595,7 +620,7 @@ PLAN_ENTITIES: list[Ent] = [
         "Plan status",
         device_class="enum",
         icon="mdi:chart-timeline-variant",
-        extra={"options": [PLAN_OK, PLAN_LIMIT, PLAN_NO_DATA]},
+        extra={"options": [PLAN_OK, PLAN_LIMIT, PLAN_PV, PLAN_NO_DATA]},
     ),
     Ent(
         "required_cap",

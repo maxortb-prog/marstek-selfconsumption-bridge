@@ -89,9 +89,14 @@ COMM_INIT = "INIT"
 # Zustand der Planung
 PLAN_OK = "ok"
 PLAN_LIMIT = "limit"
+PLAN_PV = "pv"
 PLAN_NO_DATA = "no data"
 
 # Art einer erkannten Ladung aus dem Netz
 CHARGE_OFF = "off"
 CHARGE_INTENDED = "intended"
 CHARGE_UNEXPECTED = "unexpected"
+
+# Zustand des Regelsignals
+SIGNAL_OK = "ok"
+SIGNAL_STUCK = "stuck"

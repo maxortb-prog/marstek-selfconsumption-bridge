@@ -8,6 +8,7 @@ import queue
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 from . import __project__, __version__
@@ -46,7 +47,10 @@ from .const import (
     PLAN_LIMIT,
     PLAN_NO_DATA,
     PLAN_OK,
+    PLAN_PV,
     SELECTABLE_MODES,
+    SIGNAL_OK,
+    SIGNAL_STUCK,
 )
 from .entities import (
     BATTERY_ENTITIES,
@@ -70,6 +74,18 @@ _LOGGER = logging.getLogger("marstek.bridge")
 
 # Wiederkehrende Meldungen ohne Konsequenz hoechstens alle X Sekunden.
 QUIET_LOG_INTERVAL = 10.0
+
+# So lange gilt die PV nach dem letzten nennenswerten Messwert als aktiv.
+PV_HOLD_SECONDS = 600.0
+
+
+def _parse_clock(wert: str) -> dt_time | None:
+    """"hh:mm" in eine Uhrzeit umwandeln, None bei unbrauchbarer Eingabe."""
+    try:
+        stunde, minute = (int(x) for x in str(wert).split(":", 1))
+        return dt_time(hour=stunde, minute=minute)
+    except (ValueError, AttributeError):
+        return None
 
 
 def _utcnow() -> str:
@@ -116,6 +132,8 @@ class Bridge:
         self._timing_warned = 0.0
         # Verdacht auf eine Leistungsreduktion, der noch bestaetigt werden muss.
         self._output_suspect: dict[str, float] | None = None
+        # Wann zuletzt nennenswerte PV-Leistung gemeldet wurde.
+        self._pv_last_seen: float | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -130,12 +148,12 @@ class Bridge:
         self._pv_last_sample: tuple[float, float] | None = None
 
         self.states: dict[str, dict[str, Any]] = {
-            GRP_SYSTEM: {},
+            GRP_SYSTEM: {"request_failures": 0},
             GRP_BATTERY: {},
             GRP_PV: {},
             GRP_ENERGY_STATUS: {},
             GRP_ENERGY_MODE: {},
-            GRP_ENERGY_CONTROL: {},
+            GRP_ENERGY_CONTROL: {"regulation_signal": SIGNAL_OK},
             GRP_ENERGY_METER: {},
             GRP_ENERGY_PLAN: {},
         }
@@ -689,6 +707,9 @@ class Bridge:
         if isinstance(ongrid, (int, float)) and not isinstance(ongrid, bool):
             self._last_ongrid = (float(ongrid), time.monotonic())
         self._update_pv_energy(clean.get("pv_power"))
+        pv = clean.get("pv_power")
+        if isinstance(pv, (int, float)) and pv >= self.s.plan_pv_min_power:
+            self._pv_last_seen = time.monotonic()
         self._check_grid_charging()
         self._update_plan()
         self._publish_group(GRP_ENERGY_STATUS, ENERGY_STATUS_ENTITIES)
@@ -836,8 +857,14 @@ class Bridge:
         jitter = self.s.passive_jitter
         if jitter <= 0 or power <= 0:
             return power
-        self._jitter_sign = -self._jitter_sign
+        # Am Deckel bringt der Wechsel nichts: Dort liegt die Last ueber dem,
+        # was der Speicher liefern darf, der Eingang schwankt also ohnehin
+        # kraeftig und das Geraet sieht genug Bewegung. Die Anhebung wuerde
+        # zudem am Deckel abgeschnitten und nur nach unten wirken.
         cap = self._current_cap()
+        if power >= cap:
+            return power
+        self._jitter_sign = -self._jitter_sign
         return int(max(0, min(cap, power + jitter * self._jitter_sign)))
 
     def _build_mode_config(self, mode: str) -> dict[str, Any]:
@@ -1560,10 +1587,10 @@ class Bridge:
             grund,
         )
         self._regulation_fault = grund
+        ctrl["regulation_signal"] = SIGNAL_STUCK
         ctrl["regulation_output"] = 0
         self._publish_state(GRP_ENERGY_CONTROL)
         self._apply_mode(refresh=False)
-        self._set_communication_state(COMM_FAIL, grund)
 
     def _check_stuck_recovery(self) -> None:
         """Wieder anlaufen, sobald sich der Messwert bewegt."""
@@ -1589,7 +1616,8 @@ class Bridge:
         self._stuck_value = None
         self._regulation_fault = None
         self._cycle_mean = None
-        self._set_communication(True)
+        self.states[GRP_ENERGY_CONTROL]["regulation_signal"] = SIGNAL_OK
+        self._publish_state(GRP_ENERGY_CONTROL)
 
     def _log_quiet(self, message: str, *args: Any) -> None:
         """Wiederkehrende "nichts passiert"-Meldungen ausduennen."""
@@ -1656,15 +1684,44 @@ class Bridge:
 
     def _pv_start_in(self) -> float | None:
         """Stunden bis zum naechsten PV-Beginn."""
-        try:
-            stunde, minute = (int(x) for x in self.s.plan_pv_start.split(":", 1))
-        except (ValueError, AttributeError):
+        uhrzeit = _parse_clock(self.s.plan_pv_start)
+        if uhrzeit is None:
             return None
         jetzt = datetime.now()
-        ziel = jetzt.replace(hour=stunde, minute=minute, second=0, microsecond=0)
+        ziel = jetzt.replace(
+            hour=uhrzeit.hour, minute=uhrzeit.minute, second=0, microsecond=0
+        )
         if ziel <= jetzt:
             ziel += timedelta(days=1)
         return (ziel - jetzt).total_seconds() / 3600.0
+
+    def _in_pv_window(self) -> bool:
+        """True zwischen ``plan_pv_start`` und ``plan_pv_end``.
+
+        In dieser Zeit ist die Flugbahn ohne Aussage: Sie schreibt den
+        Verbrauch bis zum naechsten PV-Beginn fort und kennt die PV nicht, die
+        gerade laedt. Der Planer meldet deshalb ``pv`` und laesst die
+        Fortschreibung aus.
+        """
+        start = _parse_clock(self.s.plan_pv_start)
+        ende = _parse_clock(self.s.plan_pv_end)
+        if start is None or ende is None:
+            return False
+        jetzt = datetime.now().time()
+        if start <= ende:
+            im_fenster = start <= jetzt < ende
+        else:  # Fenster ueber Mitternacht
+            im_fenster = jetzt >= start or jetzt < ende
+        if not im_fenster:
+            return False
+
+        # Zusaetzlich muss tatsaechlich etwas ankommen. An einem trueben Tag
+        # liegt das Fenster zwar offen, die Flugbahn waere aber durchaus
+        # aussagekraeftig. Nachgelaufen wird mit zehn Minuten Haltezeit, damit
+        # eine vorbeiziehende Wolke den Zustand nicht hin und her kippt.
+        if self._pv_last_seen is None:
+            return False
+        return time.monotonic() - self._pv_last_seen <= PV_HOLD_SECONDS
 
     def _house_load(self) -> float | None:
         """Last, die der Speicher deckt: Netzwert plus seine Ausgangsleistung.
@@ -1913,6 +1970,19 @@ class Bridge:
         plan["usable_energy"] = round(nutzbar)
         plan["required_cap"] = round(nutzbar / stunden) if stunden > 0 else 0
 
+        # Waehrend der PV-Produktion ist die Fortschreibung ohne Aussage: Sie
+        # kennt nur den Verbrauch, nicht die Energie, die gerade einlaedt.
+        if self._in_pv_window():
+            plan["hours_until_pv"] = 0.0
+            plan["projected_soc"] = None
+            plan["limit_reached_at"] = None
+            plan["plan_status"] = PLAN_PV
+            self._update_room(plan, pro_prozent, float(soc))
+            self._save_plan_state()
+            self._publish_group(GRP_ENERGY_PLAN, PLAN_ENTITIES)
+            self._log_plan()
+            return
+
         # Fortschreibung mit der geglaetteten Last; fehlt sie, mit der
         # gelernten Grundlast.
         rechenlast = plan.get("load_average") or plan.get("base_load")
@@ -1934,27 +2004,44 @@ class Bridge:
             plan["limit_reached_at"] = None
             plan["plan_status"] = PLAN_NO_DATA
 
-        if self._pv_day_start is not None:
-            plan["pv_today"] = round(max(0.0, self._pv_energy_wh - self._pv_day_start))
-
-        # Platz fuer die Prognose: wieviel passt bei PV-Beginn noch hinein?
-        # Gerechnet wird mit der korrigierten Prognose, sofern ein Faktor
-        # gelernt wurde - die Rohprognose bleibt daneben sichtbar.
-        prognose = plan.get("forecast_tomorrow")
-        faktor = plan.get("forecast_factor")
-        if prognose is not None:
-            korrigiert = float(prognose) * (float(faktor) / 100.0 if faktor else 1.0)
-            plan["forecast_corrected"] = round(korrigiert)
-        projiziert = plan.get("projected_soc")
-        if prognose is not None and projiziert is not None:
-            platz = max(0.0, (100.0 - float(projiziert)) * pro_prozent)
-            fehlt = max(0.0, float(plan["forecast_corrected"]) - platz)
-            plan["missing_room"] = round(fehlt)
-            plan["expected_spill"] = round(fehlt)
+        self._update_room(plan, pro_prozent, plan.get("projected_soc"))
 
         self._save_plan_state()
         self._publish_group(GRP_ENERGY_PLAN, PLAN_ENTITIES)
         self._log_plan()
+
+    def _update_room(
+        self, plan: dict[str, Any], pro_prozent: float, soc: float | None
+    ) -> None:
+        """Platz fuer die erwartete PV-Energie rechnen.
+
+        Vor dem PV-Beginn wird gegen den projizierten SOC gerechnet und gegen
+        die ganze Prognose. Waehrend der Produktion gegen den tatsaechlichen
+        SOC und gegen das, was von der Prognose noch aussteht - dann steht dort
+        eine Live-Antwort auf die Frage, ob heute noch etwas verschenkt wird.
+
+        Gerechnet wird mit der korrigierten Prognose, sofern ein Faktor gelernt
+        wurde; die Rohprognose bleibt daneben sichtbar.
+        """
+        if self._pv_day_start is not None:
+            plan["pv_today"] = round(max(0.0, self._pv_energy_wh - self._pv_day_start))
+
+        prognose = plan.get("forecast_tomorrow")
+        if prognose is None:
+            return
+        faktor = plan.get("forecast_factor")
+        korrigiert = float(prognose) * (float(faktor) / 100.0 if faktor else 1.0)
+        plan["forecast_corrected"] = round(korrigiert)
+
+        if soc is None:
+            return
+        erwartet = korrigiert
+        if self._in_pv_window():
+            erwartet = max(0.0, korrigiert - float(plan.get("pv_today") or 0))
+        platz = max(0.0, (100.0 - float(soc)) * pro_prozent)
+        fehlt = max(0.0, erwartet - platz)
+        plan["missing_room"] = round(fehlt)
+        plan["expected_spill"] = round(fehlt)
 
     def _log_plan(self) -> None:
         if not _LOGGER.isEnabledFor(PLAN_LEVEL):
@@ -1974,7 +2061,18 @@ class Bridge:
             plan.get("base_load"),
             plan.get("hours_until_pv"),
         )
-        if plan.get("plan_status") == PLAN_LIMIT:
+        if plan.get("plan_status") == PLAN_PV:
+            _LOGGER.log(
+                PLAN_LEVEL,
+                "PV laeuft (Fenster %s bis %s, aktuell %s W) - keine "
+                "Flugbahn. Heute bisher %s Wh erzeugt, erwartet %s Wh",
+                self.s.plan_pv_start,
+                self.s.plan_pv_end,
+                self.states[GRP_ENERGY_STATUS].get("pv_power"),
+                plan.get("pv_today"),
+                plan.get("forecast_corrected"),
+            )
+        elif plan.get("plan_status") == PLAN_LIMIT:
             _LOGGER.log(
                 PLAN_LEVEL,
                 "Flugbahn fuehrt unter die Grenze: projiziert %s %%, erreicht "
@@ -2254,18 +2352,28 @@ class Bridge:
             _LOGGER.warning(
                 "%s verworfen (retries=0, kein Watchdog): %s", method, err
             )
+            self._note_request_failure()
             return
         self._watchdog_failures += 1
-        _LOGGER.error(
-            "\033[1;31mWatchdog ausgeloest\033[0m durch %s (%s) - Fehler %s/%s",
+        self._note_request_failure()
+        # Ein beschaeftigtes Geraet ist kein Kommunikationsausfall. Einzelne
+        # Fehlschlaege werden deshalb nur gezaehlt; "Communication established"
+        # wechselt erst, wenn die Schwelle erreicht ist.
+        _LOGGER.warning(
+            "%s fehlgeschlagen (%s) - Fehler %s/%s",
             method,
             err,
             self._watchdog_failures,
             self.s.watchdog_failure_threshold,
         )
-        self._set_communication(False, str(err))
         self.health.update(watchdog_failures=self._watchdog_failures)
         if self._watchdog_failures >= self.s.watchdog_failure_threshold:
+            _LOGGER.error(
+                "\033[1;31mWatchdog ausgeloest\033[0m: %s Fehler in Folge, "
+                "das Geraet gilt als nicht erreichbar",
+                self._watchdog_failures,
+            )
+            self._set_communication(False, str(err))
             first = self.health.snapshot().get("device_ok") is not False
             self.health.update(device_ok=False)
             self._initialized = False
@@ -2274,6 +2382,13 @@ class Bridge:
                     "Health-Endpoint meldet unhealthy - Supervisor-Watchdog "
                     "startet das Add-on neu, sofern aktiviert"
                 )
+
+    def _note_request_failure(self) -> None:
+        """Einen fehlgeschlagenen Request zaehlen und sichtbar machen."""
+        sys_state = self.states[GRP_SYSTEM]
+        sys_state["request_failures"] = int(sys_state.get("request_failures") or 0) + 1
+        sys_state["last_failure"] = _utcnow()
+        self._publish_state(GRP_SYSTEM)
 
     def _set_communication(self, ok: bool, reason: str | None = None) -> None:
         self._set_communication_state(COMM_OK if ok else COMM_FAIL, reason)
@@ -2286,11 +2401,6 @@ class Bridge:
                    wieder ansprechbar wird.
         ``FAIL`` - Geraet antwortet nicht mehr, der Watchdog hat ausgeloest.
         """
-        # Solange das Regelsignal als unbrauchbar gilt, bleibt FAIL stehen -
-        # auch wenn die Geraetekommunikation selbst einwandfrei laeuft.
-        if state == COMM_OK and self._regulation_fault:
-            state = COMM_FAIL
-            reason = self._regulation_fault
         if self.states[GRP_SYSTEM].get("communication") != state:
             if state == COMM_OK:
                 _LOGGER.info("\033[1;32mCommunication established = ON\033[0m")

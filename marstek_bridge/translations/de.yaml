@@ -100,7 +100,9 @@ configuration:
       Minuten ohne erkennbare Aenderung auf 0 zurueck - bei konstanter
       Grundlast ohne Lastwechsel passiert genau das. Ein Wechsel um ein bis
       zwei Watt haelt die Erkennung wach. Betroffen ist nur der gesendete Wert,
-      der interne Sollwert und die Regelrechnung bleiben unberuehrt. 0 = aus.
+      der interne Sollwert und die Regelrechnung bleiben unberuehrt. Am Deckel
+      wird nicht gewechselt: Dort liegt die Last ueber dem, was der Speicher
+      liefern darf, der Eingang schwankt also ohnehin kraeftig. 0 = aus.
       self_regulation_enabled: Startzustand der Selbstregelung. Ist sie aktiv,
       wird die gesendete Leistung aus dem MQTT-Regelwert berechnet und die
       Number-Entity "Passive power" dient nur noch als Obergrenze.
@@ -187,6 +189,18 @@ configuration:
       plan_pv_start: Uhrzeit, ab der mit nennenswerter PV-Leistung zu rechnen
       ist - nicht der Sonnenaufgang. Bestimmt, wie lange die Energie reichen
       muss. Saisonal nachziehen.
+      plan_pv_end: Uhrzeit, ab der nicht mehr mit nennenswerter PV-Leistung zu
+      rechnen ist. Zwischen plan_pv_start und plan_pv_end meldet der Planer den
+      Zustand "pv" und laesst die Flugbahn aus - sie kennt nur den Verbrauch,
+      nicht die Energie, die gerade einlaedt. Der fehlende Platz wird in dieser
+      Zeit gegen den tatsaechlichen SOC und gegen den noch ausstehenden Teil
+      der Prognose gerechnet.
+      plan_pv_min_power: ab dieser PV-Leistung in Watt gilt die Erzeugung als
+      nennenswert. Der Zustand "pv" verlangt beides: Uhrzeit im Fenster und
+      tatsaechliche Erzeugung - an einem trueben Tag bleibt die Flugbahn also
+      erhalten, obwohl das Fenster offen ist. Nach dem letzten Messwert
+      darueber laeuft die Erkennung noch zehn Minuten nach, damit eine
+      vorbeiziehende Wolke den Zustand nicht hin und her kippt.
       plan_load_window: Fenster in Sekunden, ueber das die Last fuer die
       Flugbahn gemittelt wird. Die Fortschreibung laeuft ueber viele Stunden -
       mit dem Momentanwert wuerde ein gerade anlaufender Kuehlschrank die halbe

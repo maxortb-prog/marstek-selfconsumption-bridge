@@ -95,7 +95,9 @@ configuration:
       minutes without a detectable change - which is exactly what happens with
       a constant base load. Alternating by one or two watts keeps that
       detection awake. Only the transmitted value is affected; the internal
-      setpoint and the control calculation stay untouched. 0 = off.
+      setpoint and the control calculation stay untouched. No alternation
+      happens at the cap: there the load exceeds what the battery may deliver,
+      so the input fluctuates strongly anyway. 0 = off.
       self_regulation_enabled: initial state of the self-regulation. While
       active, the power sent is derived from the MQTT control value and the
       "Passive power" number entity only acts as the upper limit.
@@ -181,6 +183,17 @@ configuration:
       plan_pv_start: time of day from which noticeable PV production can be
       expected - not sunrise. Determines how long the energy has to last.
       Adjust with the seasons.
+      plan_pv_end: time of day after which no noticeable PV production is
+      expected. Between plan_pv_start and plan_pv_end the planner reports the
+      state "pv" and skips the trajectory - it only knows consumption, not the
+      energy currently charging in. Missing room is then calculated against the
+      actual SOC and against the part of the forecast still outstanding.
+      plan_pv_min_power: PV power in watts from which production counts as
+      noticeable. The state "pv" requires both: clock inside the window and
+      actual production - on an overcast day the trajectory is therefore kept
+      even though the window is open. After the last reading above this value
+      the detection holds for another ten minutes, so a passing cloud does not
+      flip the state back and forth.
       plan_load_window: window in seconds over which the load is averaged for
       the trajectory. The projection runs over many hours - with the
       instantaneous value a fridge that just started would be extrapolated over

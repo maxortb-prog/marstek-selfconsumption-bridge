@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.2 - 2026-10-04
+
+- Der Zustand `pv` verlangt jetzt beides: Uhrzeit im Fenster **und**
+  tatsaechliche Erzeugung ueber `plan_pv_min_power` (neue Option, Standard
+  50 W). An einem trueben Tag bleibt die Flugbahn damit erhalten, obwohl das
+  Fenster offen ist - dort ist sie aussagekraeftig.
+- Nach dem letzten Messwert ueber der Schwelle laeuft die Erkennung zehn
+  Minuten nach, damit eine vorbeiziehende Wolke den Zustand nicht hin und her
+  kippt.
+
+## 0.3.1 - 2026-10-04
+
+- Neuer Planungszustand `pv` und neue Option `plan_pv_end` (Standard 18:00):
+  Zwischen `plan_pv_start` und `plan_pv_end` laesst der Planer die Flugbahn
+  aus. Sie war dort ohne Aussage, weil sie nur den Verbrauch fortschreibt und
+  die gerade einladende PV nicht kennt - um 12:36 ergab das einen projizierten
+  SOC von -27 %, waehrend der Speicher mit 585 W geladen wurde.
+- *Missing room* und *Expected spill* werden im PV-Fenster gegen den
+  tatsaechlichen SOC und den noch ausstehenden Teil der Prognose gerechnet und
+  beantworten damit live, ob heute noch Energie verschenkt wird.
+
+## 0.3.0 - 2026-10-04
+
+- **`Communication established` meldet nur noch echte Erreichbarkeitsprobleme.**
+  Bisher sprang die Entity schon beim ersten Timeout auf `FAIL` und beim
+  naechsten Erfolg zurueck - bei einem Geraet, das regelmaessig kurz nicht
+  antwortet, flatterte sie dadurch staendig. Jetzt wechselt sie erst, wenn
+  `watchdog_failure_threshold` Fehler in Folge aufgetreten sind.
+- Neue Entities *Request failures* und *Last request failure* in der Gruppe
+  *Marstek System*: Einzelne Timeouts werden gezaehlt statt eskaliert.
+- Das haengende Regelsignal hat jetzt eine eigene Entity *Regulation signal*
+  (`ok` / `stuck`) in der Gruppe *Marstek Energy Control*, statt
+  `Communication established` auf `FAIL` zu verriegeln. Der Sollwert geht
+  weiterhin auf 0 W, und der Zustand loest sich von selbst, sobald sich der
+  Messwert wieder bewegt.
+
+## 0.2.4 - 2026-10-04
+
+- `passive_jitter` wirkt nicht mehr, wenn der Sollwert am Deckel steht. Dort
+  liegt die Last ueber dem, was der Speicher liefern darf - der Eingang
+  schwankt ohnehin kraeftig und das Geraet sieht genug Bewegung. Ausserdem
+  wurde die Anhebung am Deckel abgeschnitten, sodass der Wechsel einseitig nach
+  unten wirkte (197/200 statt 197/203).
+
 ## 0.2.2 - 2026-10-03
 
 - **Fix:** Die Warnung zum Keepalive-Timing verglich gegen
