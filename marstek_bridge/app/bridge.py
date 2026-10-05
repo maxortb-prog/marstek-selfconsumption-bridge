@@ -136,6 +136,8 @@ class Bridge:
         self._pv_last_seen: float | None = None
         # Nach einem Fehlschlag die Vorab-Abfrage einmal ueberspringen.
         self._skip_query_once = False
+        # Gemessene Dauer der Vorab-Abfrage, gleitend gemittelt.
+        self._query_duration: float | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -1356,15 +1358,29 @@ class Bridge:
             cd - takt,
         )
 
+    def _note_query_duration(self, dauer: float) -> None:
+        """Dauer der Vorab-Abfrage gleitend mitfuehren."""
+        if self._query_duration is None:
+            self._query_duration = dauer
+        else:
+            self._query_duration = 0.7 * self._query_duration + 0.3 * dauer
+
     def _cycle_reserve(self) -> float:
         """Zeit, die die Abfrage vor dem Kommando braucht.
 
-        Mindestpause zwischen zwei Anfragen plus Antwortzeit. Um genau diese
-        Spanne startet der Takt frueher, damit das Kommando puenktlich zum
-        Intervall rausgeht - sonst schoebe sich jeder Takt um die Dauer der
+        Um diese Spanne startet der Takt frueher, damit das Kommando puenktlich
+        zum Intervall rausgeht - sonst schoebe sich jeder Takt um die Dauer der
         Abfrage nach hinten und die Marge zur cd_time schrumpft.
+
+        Gerechnet wird mit der **gemessenen** Dauer, nicht mit dem Timeout.
+        Der schlimmste Fall als Ansatz liesse das Kommando jedes Mal deutlich
+        zu frueh rausgehen: Bei einem Timeout von 3 s und einer tatsaechlichen
+        Antwortzeit von 1 s waeren das zwei Sekunden pro Takt, aus 15 Sekunden
+        wuerden 13. Solange noch nichts gemessen wurde, gilt der alte Ansatz.
         """
-        return self.s.request_delay + self.s.request_timeout
+        if self._query_duration is None:
+            return self.s.request_delay + self.s.request_timeout
+        return max(0.5, self._query_duration)
 
     def _passive_cycle(self) -> None:
         """Einmal je Takt: regeln und senden, oder nur nachsenden."""
@@ -1414,7 +1430,10 @@ class Bridge:
         # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
         # gehoert also zur richtigen Vorgabe - anders als eine Abfrage kurz
         # nach dem Kommando, die noch den alten Zustand zeigt.
-        if not self._step_es_status():
+        begonnen = time.monotonic()
+        erfolg = self._step_es_status()
+        self._note_query_duration(time.monotonic() - begonnen)
+        if not erfolg:
             _LOGGER.warning(
                 "ES.GetStatus vor dem Regeltakt fehlgeschlagen - keine "
                 "Korrektur, Sollwert %s W wird erneut gesendet",

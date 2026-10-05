@@ -322,10 +322,24 @@ t=15     Mittelwert bilden, rechnen, Kommando raus
 Beispiel für `passive_keepalive_interval: 15` und
 `self_regulation_average_window: 5`.
 
-**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit -
-Mindestpause plus Antwort - und der Takt startet um genau diese Reserve früher.
-Ohne das würde sich jeder Takt um die Dauer der Abfrage nach hinten schieben
-und die Marge zur `cd_time` schrumpfen.
+**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit,
+und der Takt startet um genau diese Reserve früher. Ohne das würde sich jeder
+Takt um die Dauer der Abfrage nach hinten schieben und die Marge zur `cd_time`
+schrumpfen.
+
+Gerechnet wird mit der **gemessenen** Dauer, gleitend mitgeführt - nicht mit
+`request_timeout`. Der schlimmste Fall als Ansatz ließe das Kommando jedes Mal
+zu früh rausgehen:
+
+| eingestellter Takt | echte Antwortzeit | Abstand der Kommandos |
+|---|---|---|
+| 15 s | 1,1 s | 15,0 s |
+| 15 s | 0,4 s | 14,9 s |
+| 15 s | 2,5 s | 15,0 s |
+
+Mit dem Timeout als Ansatz (1 s Pause + 3 s Timeout) wären daraus bei 1,1 s
+tatsächlicher Antwortzeit durchgehend 12,1 Sekunden geworden - also ein Viertel
+mehr Kommandos als eingestellt.
 
 **Andere Abfragen** laufen im freien Fenster zwischen Kommando und
 Mittelungsfenster. Eine Abfrage, die das Doppelte ihres Intervalls überfällig

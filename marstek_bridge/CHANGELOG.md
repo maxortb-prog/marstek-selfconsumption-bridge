@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.6 - 2026-10-05
+
+- **Fix:** Der Regeltakt war systematisch kuerzer als eingestellt. Die Reserve
+  fuer die Vorab-Abfrage rechnete mit dem schlimmsten Fall
+  (`request_delay` + `request_timeout`), tatsaechlich ist die Abfrage aber
+  meist nach gut einer Sekunde durch. Bei einem eingestellten Takt von 15
+  Sekunden, 1 s Pause und 3 s Timeout kamen die Kommandos dadurch alle 12
+  Sekunden - ein Viertel mehr als gewollt.
+- Die Reserve richtet sich jetzt nach der gemessenen Dauer der Abfrage, die
+  gleitend mitgefuehrt wird. Der Takt trifft damit den eingestellten Wert auf
+  etwa eine Zehntelsekunde genau.
+
 ## 0.3.5 - 2026-10-05
 
 - `passive_cd_time_max` von 300 auf **30 Sekunden** gesenkt. Werte darueber
