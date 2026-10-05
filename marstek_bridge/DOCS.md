@@ -322,59 +322,16 @@ t=15     Mittelwert bilden, rechnen, Kommando raus
 Beispiel für `passive_keepalive_interval: 15` und
 `self_regulation_average_window: 5`.
 
-**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit,
-und der Takt startet um genau diese Reserve früher. Ohne das würde sich jeder
-Takt um die Dauer der Abfrage nach hinten schieben und die Marge zur `cd_time`
-schrumpfen.
-
-Gerechnet wird mit der **gemessenen** Dauer, gleitend mitgeführt - nicht mit
-`request_timeout`. Der schlimmste Fall als Ansatz ließe das Kommando jedes Mal
-zu früh rausgehen:
-
-| eingestellter Takt | echte Antwortzeit | Abstand der Kommandos |
-|---|---|---|
-| 15 s | 1,1 s | 15,0 s |
-| 15 s | 0,4 s | 14,9 s |
-| 15 s | 2,5 s | 15,0 s |
-
-Mit dem Timeout als Ansatz (1 s Pause + 3 s Timeout) wären daraus bei 1,1 s
-tatsächlicher Antwortzeit durchgehend 12,1 Sekunden geworden - also ein Viertel
-mehr Kommandos als eingestellt.
-
-**Gemessen wird ab dem Absenden**, nicht ab der Quittung. Für den Countdown des
-Geräts zählt der Moment, in dem das Kommando ankommt; würde erst nach der
-Antwort gestempelt, käme deren Laufzeit bei jedem Durchgang obendrauf:
-
-| Antwortzeit auf `ES.SetMode` | Abstand der Sendezeitpunkte |
-|---|---|
-| 0,5 s | 10,0 s |
-| 1,0 s | 10,0 s |
-| 2,0 s | 10,0 s |
-
-Vorher waren es 10,5 / 11,0 / 12,0 Sekunden - der Takt hing also an der
-Antwortzeit des Geräts, die selbst schwankt.
+**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit -
+Mindestpause plus Antwort - und der Takt startet um genau diese Reserve früher.
+Ohne das würde sich jeder Takt um die Dauer der Abfrage nach hinten schieben
+und die Marge zur `cd_time` schrumpfen.
 
 **Andere Abfragen** laufen im freien Fenster zwischen Kommando und
 Mittelungsfenster. Eine Abfrage, die das Doppelte ihres Intervalls überfällig
-ist, läuft trotzdem - sie kann nicht verhungern.
-
-| Takt | Fenster offen bis | nutzbar nach dem Kommando |
-|---|---|---|
-| 10 s | 3,9 s | 2,9 s |
-| 12 s | 5,9 s | 4,9 s |
-| 15 s | 8,9 s | 7,9 s |
-| 20 s | 13,9 s | 12,9 s |
-
-Das wirkt bei kurzem Takt knapp, reicht aber bei weitem: Eine Abfrage braucht
-rund zwei Sekunden, und selbst bei 10 Sekunden Takt stehen 360 Fenster je
-Stunde bereit. `Bat.GetStatus` mit 600 Sekunden Intervall wird sechsmal je
-Stunde fällig - auf 360 Gelegenheiten. Erst wenn mehrere Abfragen im
-Sekundenbereich laufen sollen, wird der Takt zur Begrenzung.
-
-**Nach einem fehlgeschlagenen Request ruhen auch die Nebenabfragen** bis zum
-nächsten Regeltakt. Das Gerät antwortet dann ohnehin gerade nicht, und eine
-fällige Abfrage träfe genau den ungünstigsten Moment - zumal der Fehlschlag das
-freie Fenster neu beginnen lässt.
+ist, läuft trotzdem - sie kann nicht verhungern. Bei kurzem Takt bleibt
+allerdings kaum Platz: Bei 10 Sekunden Takt, 5 Sekunden Fenster und 2 Sekunden
+Reserve sind es gerade drei Sekunden.
 
 **Die `cd_time` muss zum Takt passen.** Das Gerät fällt aus dem Passive-Modus,
 wenn länger als `cd_time` kein Kommando kommt. Liegt der Takt dicht darunter,
