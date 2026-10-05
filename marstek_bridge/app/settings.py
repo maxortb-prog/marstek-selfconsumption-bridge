@@ -62,7 +62,7 @@ OPTION_GROUPS: dict[str, dict[str, Any]] = {
         "passive_power_min": -1200,
         "passive_power_max": 1200,
         "passive_power_default": 0,
-        "passive_cd_time_max": 300,
+        "passive_cd_time_max": 30,
         "passive_cd_time_default": 10,
         "passive_keepalive": False,
         "passive_keepalive_interval": 0.0,
@@ -160,7 +160,7 @@ class Settings:
     passive_power_min: int = -1200
     passive_power_max: int = 1200
     passive_power_default: int = 0
-    passive_cd_time_max: int = 300
+    passive_cd_time_max: int = 30
     passive_cd_time_default: int = 10
     passive_keepalive: bool = False
     passive_keepalive_interval: float = 0.0

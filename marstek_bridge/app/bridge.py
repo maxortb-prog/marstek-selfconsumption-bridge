@@ -1327,16 +1327,33 @@ class Bridge:
         if not grund and jetzt - self._timing_warned < 600:
             return
         self._timing_warned = jetzt
-        _LOGGER.warning(
-            "Knappes Timing%s: Regeltakt %.0fs bei cd_time %ss - nur %.0fs "
-            "Reserve. Ein einzelnes verlorenes Kommando wirft das Geraet aus "
-            "dem Passive-Modus. Empfehlung: cd_time auf mindestens %.0fs, "
-            "oder request_retries auf 1",
-            f" ({grund})" if grund else "",
+
+        if cd < takt:
+            # Der Takt ist laenger als die Frist - dann laeuft der Countdown in
+            # jedem Durchgang ab, nicht nur bei einem verlorenen Kommando.
+            _LOGGER.warning(
+                "Regeltakt %.0fs ist laenger als die cd_time %ss%s - der "
+                "Countdown des Geraets laeuft in jedem Durchgang ab. Takt "
+                "verkuerzen oder cd_time erhoehen",
+                takt,
+                cd,
+                f" ({grund})" if grund else "",
+            )
+            return
+
+        # Takt und Frist liegen dicht beieinander. Das ist kein Fehler: In der
+        # Praxis arbeitet das Geraet am saubersten, wenn beide gleich gross
+        # sind. Ein verlorenes Kommando fuehrt dann zwar zu einer kurzen
+        # Reduktion, die aber mit dem naechsten Takt wieder ausgeglichen wird.
+        _LOGGER.log(
+            CALC_LEVEL,
+            "Regeltakt %.0fs bei cd_time %ss%s - %.0fs Reserve. Ein verlorenes "
+            "Kommando fuehrt zu einer kurzen Reduktion, die der naechste Takt "
+            "ausgleicht. Mit request_retries ab 1 faellt auch das weg",
             takt,
             cd,
+            f" ({grund})" if grund else "",
             cd - takt,
-            2 * takt,
         )
 
     def _cycle_reserve(self) -> float:
@@ -2409,6 +2426,10 @@ class Bridge:
         # Statusabfrage es nur um ihre Antwortzeit verzoegern und das Geraet
         # zusaetzlich belasten wuerde.
         self._skip_query_once = True
+        # Der fehlgeschlagene Versuch zaehlt als Takt. Ohne das bliebe der
+        # Takt faellig und die naechste Anfrage ginge sofort raus - auf ein
+        # Geraet, das eben nicht geantwortet hat, im Abstand von Millisekunden.
+        self._last_passive_push = time.monotonic()
         self._publish_state(GRP_SYSTEM)
 
     def _set_communication(self, ok: bool, reason: str | None = None) -> None:

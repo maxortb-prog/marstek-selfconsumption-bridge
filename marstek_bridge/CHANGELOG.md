@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.5 - 2026-10-05
+
+- `passive_cd_time_max` von 300 auf **30 Sekunden** gesenkt. Werte darueber
+  werden vom Geraet offenbar nicht uebernommen - es verhaelt sich dann, als
+  waere ein kleinerer Wert aktiv, und jede Reserve-Rechnung wird dadurch zu
+  optimistisch. Die 300 stammten aus einer Forenangabe, die sich nicht
+  bestaetigen liess.
+- Die Timing-Pruefung warnt nur noch, wenn der Regeltakt **laenger** ist als die
+  `cd_time` - dann laeuft der Countdown in jedem Durchgang ab. Liegen beide
+  dicht beieinander oder sind gleich gross, erscheint nur noch ein Hinweis auf
+  `calc`: In der Praxis arbeitet das Geraet bei Takt gleich `cd_time` am
+  saubersten, ein verlorenes Kommando fuehrt lediglich zu einer kurzen
+  Reduktion.
+
+## 0.3.4 - 2026-10-05
+
+- **Fix:** Nach einem fehlgeschlagenen Kommando ging das naechste sofort raus -
+  im Abstand von Millisekunden auf ein Geraet, das eben nicht geantwortet
+  hatte. Der Grund: Bei einem Fehlschlag wurde der Zeitstempel des letzten
+  Kommandos nicht gesetzt, der Takt galt also weiterhin als faellig, und die
+  Ueberspring-Regel aus 0.3.3 feuerte unmittelbar. Ein fehlgeschlagener Versuch
+  zaehlt jetzt als Takt; die naechste Anfrage wartet den regulaeren Abstand ab.
+
 ## 0.3.3 - 2026-10-04
 
 - Nach einem fehlgeschlagenen Request entfaellt die Statusabfrage im naechsten

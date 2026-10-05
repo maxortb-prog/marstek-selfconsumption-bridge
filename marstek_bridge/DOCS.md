@@ -84,7 +84,7 @@ ES.GetStatus 5, ES.GetMode 6, ES.SetMode 7, EM 8, DOD 9, Ble.Adv 10, Led 11.
 | `passive_power_min` | `-1200` | Untere Grenze (Laden). |
 | `passive_power_max` | `1200` | Obere Grenze (Einspeisen). |
 | `passive_power_default` | `0` | Startwert der Number-Entity. |
-| `passive_cd_time_max` | `300` | Maximaler Countdown in Sekunden. |
+| `passive_cd_time_max` | `30` | Maximaler Countdown in Sekunden. |
 | `passive_cd_time_default` | `10` | Startwert des Countdowns. |
 | `passive_jitter` | `0` | Wechselt den gesendeten Wert um ±diesen Betrag, damit das Gerät nicht selbst abschaltet. `0` = aus. |
 | `passive_keepalive_interval` | `0.0` | Abstand zwischen zwei Keepalives in Sekunden. `0` = halbe `cd_time`. |
@@ -162,8 +162,11 @@ WARNING  Knappes Timing: Regeltakt 10s bei cd_time 10s - nur 0s Reserve.
          request_retries auf 1
 ```
 
-Die Warnung erscheint, sobald die `cd_time` kleiner ist als das Doppelte des
-Takts. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
+Die Praxis zeigt allerdings: **Am stabilsten läuft es, wenn der Takt der
+`cd_time` entspricht.** Ein verlorenes Kommando führt dann zwar zu einer kurzen
+Reduktion, die der nächste Takt aber wieder ausgleicht. Die Bridge vermerkt das
+nur auf `calc`. Eine echte Warnung kommt erst, wenn der Takt **länger** ist als
+die `cd_time` - dann läuft der Countdown in jedem Durchgang ab. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
 *Passive cd time*, nicht gegen `passive_cd_time_default` - der kann durch
 `restore_state` oder eine Änderung zur Laufzeit davon abweichen. Deshalb läuft
 die Prüfung beim Start, bei jeder Änderung der `cd_time` und darüber hinaus
@@ -289,6 +292,23 @@ Da jeder Fehlschlag die Marke neu setzt, entsteht ein Wechselspiel: Abfrage
 scheitert, nächster Takt nur senden, dann wieder ein Versuch. Solange sich das
 Gerät schwertut, halbiert das die Zahl der Anfragen.
 
+**Ein Fehlschlag zählt als Takt.** Ohne das bliebe der Takt fällig, und die
+nächste Anfrage ginge im Abstand von Millisekunden auf ein Gerät, das eben
+nicht geantwortet hat. Nach einem Timeout wartet die Bridge daher den regulären
+Takt ab:
+
+```
+Takt 10 s, jedes Kommando laeuft in den 3-Sekunden-Timeout
+Versuche bei t = 9, 18, 27, 36, 45 s
+```
+
+Das hat eine Kehrseite, die man kennen muss: Der Abstand zum letzten
+**erfolgreichen** Kommando wächst mit jedem Fehlschlag um einen vollen Takt.
+Bei `cd_time` 30 und einem Takt von 10 Sekunden überlebt man zwei Fehlschläge
+in Folge, beim dritten fällt das Gerät aus dem Passive-Modus. Wer das enger
+absichern will, setzt `request_retries` auf 1 - dann fängt schon der
+Wiederholversuch den verlorenen Frame ab, ohne dass ein ganzer Takt vergeht.
+
 ### Der Zeitplan eines Regeltakts
 
 ```
@@ -325,8 +345,11 @@ WARNING  Knappes Timing: Regeltakt 10s bei cd_time 10s - nur 0s Reserve.
          request_retries auf 1
 ```
 
-Die Warnung erscheint, sobald die `cd_time` kleiner ist als das Doppelte des
-Takts. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
+Die Praxis zeigt allerdings: **Am stabilsten läuft es, wenn der Takt der
+`cd_time` entspricht.** Ein verlorenes Kommando führt dann zwar zu einer kurzen
+Reduktion, die der nächste Takt aber wieder ausgleicht. Die Bridge vermerkt das
+nur auf `calc`. Eine echte Warnung kommt erst, wenn der Takt **länger** ist als
+die `cd_time` - dann läuft der Countdown in jedem Durchgang ab. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
 *Passive cd time*, nicht gegen `passive_cd_time_default` - der kann durch
 `restore_state` oder eine Änderung zur Laufzeit davon abweichen. Deshalb läuft
 die Prüfung beim Start, bei jeder Änderung der `cd_time` und darüber hinaus
