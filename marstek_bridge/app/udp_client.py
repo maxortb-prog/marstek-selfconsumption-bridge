@@ -135,8 +135,15 @@ class MarstekUdpClient:
         *,
         target: tuple[str, int] | None = None,
         with_instance: bool = True,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Eine Anfrage senden und das ``result``-Objekt zurueckliefern."""
+        """Eine Anfrage senden und das ``result``-Objekt zurueckliefern.
+
+        ``timeout`` begrenzt diese eine Anfrage abweichend von der
+        Konfiguration. Gebraucht wird das vor einem Regeltakt: Die Abfrage darf
+        das faellige Kommando nicht verzoegern, also bekommt sie nur die Zeit,
+        die bis dahin bleibt.
+        """
         payload_params: dict[str, Any] = {}
         if with_instance:
             payload_params["id"] = self.instance_id(method)
@@ -159,7 +166,9 @@ class MarstekUdpClient:
                 msg_id = self.next_msg_id()
                 message = {"id": msg_id, "method": method, "params": payload_params}
                 try:
-                    return self._exchange(message, addr, method, attempt, attempts)
+                    return self._exchange(
+                        message, addr, method, attempt, attempts, timeout
+                    )
                 except ApiError:
                     raise
                 except UdpError as err:
@@ -194,7 +203,9 @@ class MarstekUdpClient:
         method: str,
         attempt: int,
         attempts: int,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
+        grenze = self.timeout if timeout is None else max(0.2, timeout)
         sock = self._ensure_socket()
 
         # Mindestpause zur vorherigen Anfrage einhalten.
@@ -216,20 +227,20 @@ class MarstekUdpClient:
             self._last_exchange = time.monotonic()
             raise UdpError(f"Senden fehlgeschlagen: {err}") from err
 
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + grenze
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self._last_exchange = time.monotonic()
                 raise UdpTimeout(
-                    f"Timeout nach {self.timeout}s (id={message['id']})"
+                    f"Timeout nach {grenze}s (id={message['id']})"
                 )
             sock.settimeout(remaining)
             try:
                 data, sender = sock.recvfrom(8192)
             except TimeoutError as err:
                 raise UdpTimeout(
-                    f"Timeout nach {self.timeout}s (id={message['id']})"
+                    f"Timeout nach {grenze}s (id={message['id']})"
                 ) from err
             except OSError as err:
                 raise UdpError(f"Empfangen fehlgeschlagen: {err}") from err

@@ -136,6 +136,8 @@ class Bridge:
         self._pv_last_seen: float | None = None
         # Nach einem Fehlschlag die Vorab-Abfrage einmal ueberspringen.
         self._skip_query_once = False
+        # Gemessene Dauer der Vorab-Abfrage, gleitend gemittelt.
+        self._query_duration: float | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -689,8 +691,8 @@ class Bridge:
         self._publish_group(GRP_PV, build_pv_entities(clean))
         return True
 
-    def _step_es_status(self) -> bool:
-        result = self._query(M_ES_STATUS)
+    def _step_es_status(self, timeout: float | None = None) -> bool:
+        result = self._query(M_ES_STATUS, timeout=timeout)
         if result is None:
             return False
         clean = _clean(result)
@@ -942,6 +944,11 @@ class Bridge:
             mode,
             config,
         )
+        # Fuer den Countdown des Geraets zaehlt der Moment, in dem das Kommando
+        # bei ihm ankommt - nicht der, in dem die Quittung zurueck ist. Wuerde
+        # erst danach gestempelt, kaeme die Antwortzeit bei jedem Durchgang auf
+        # den Takt obendrauf: aus 10 Sekunden wuerden 11.
+        gesendet = time.monotonic()
         result = self._query(M_ES_SET_MODE, {"config": config})
         if result is None:
             return False
@@ -950,7 +957,7 @@ class Bridge:
             M_ES_SET_MODE, result, logging.INFO if refresh else CALC_LEVEL
         )
         self._publish_state(GRP_ENERGY_CONTROL)
-        self._last_passive_push = time.monotonic()
+        self._last_passive_push = gesendet
         # Nach einem manuellen Moduswechsel den neuen Zustand nachlesen, damit
         # die Gruppe *Marstek Energy Mode* stimmt. Steht poll_interval_mode auf
         # 0, will der Benutzer diese Gruppe gar nicht aktuell halten - dann
@@ -1356,15 +1363,29 @@ class Bridge:
             cd - takt,
         )
 
+    def _note_query_duration(self, dauer: float) -> None:
+        """Dauer der Vorab-Abfrage gleitend mitfuehren."""
+        if self._query_duration is None:
+            self._query_duration = dauer
+        else:
+            self._query_duration = 0.7 * self._query_duration + 0.3 * dauer
+
     def _cycle_reserve(self) -> float:
         """Zeit, die die Abfrage vor dem Kommando braucht.
 
-        Mindestpause zwischen zwei Anfragen plus Antwortzeit. Um genau diese
-        Spanne startet der Takt frueher, damit das Kommando puenktlich zum
-        Intervall rausgeht - sonst schoebe sich jeder Takt um die Dauer der
+        Um diese Spanne startet der Takt frueher, damit das Kommando puenktlich
+        zum Intervall rausgeht - sonst schoebe sich jeder Takt um die Dauer der
         Abfrage nach hinten und die Marge zur cd_time schrumpft.
+
+        Gerechnet wird mit der **gemessenen** Dauer, nicht mit dem Timeout.
+        Der schlimmste Fall als Ansatz liesse das Kommando jedes Mal deutlich
+        zu frueh rausgehen: Bei einem Timeout von 3 s und einer tatsaechlichen
+        Antwortzeit von 1 s waeren das zwei Sekunden pro Takt, aus 15 Sekunden
+        wuerden 13. Solange noch nichts gemessen wurde, gilt der alte Ansatz.
         """
-        return self.s.request_delay + self.s.request_timeout
+        if self._query_duration is None:
+            return self.s.request_delay + self.s.request_timeout
+        return max(0.5, self._query_duration)
 
     def _passive_cycle(self) -> None:
         """Einmal je Takt: regeln und senden, oder nur nachsenden."""
@@ -1414,7 +1435,16 @@ class Bridge:
         # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
         # gehoert also zur richtigen Vorgabe - anders als eine Abfrage kurz
         # nach dem Kommando, die noch den alten Zustand zeigt.
-        if not self._step_es_status():
+        # Die Abfrage darf das faellige Kommando nicht verzoegern. Sie bekommt
+        # deshalb nur die Zeit, die bis zum Takt bleibt - laeuft sie in den
+        # vollen request_timeout, kaeme das Kommando sonst mehrere Sekunden zu
+        # spaet und das Geraet faellt aus dem Passive-Modus.
+        begonnen = time.monotonic()
+        budget = interval - (begonnen - self._last_passive_push)
+        budget = max(0.3, min(self.s.request_timeout, budget))
+        erfolg = self._step_es_status(timeout=budget)
+        self._note_query_duration(time.monotonic() - begonnen)
+        if not erfolg:
             _LOGGER.warning(
                 "ES.GetStatus vor dem Regeltakt fehlgeschlagen - keine "
                 "Korrektur, Sollwert %s W wird erneut gesendet",
@@ -2246,7 +2276,15 @@ class Bridge:
         Mittelungsfensters. Danach sammelt die Bridge die Messwerte fuer den
         naechsten Takt und fragt kurz davor selbst den Geraetestatus ab - dort
         hat nichts anderes Platz.
+
+        Nach einem fehlgeschlagenen Request ruht ausserdem alles bis zum
+        naechsten Regeltakt. Das Geraet antwortet dann ohnehin gerade nicht,
+        und eine faellige Nebenabfrage traefe genau den unguenstigsten Moment.
         """
+        # Gilt auch ohne Selbstregelung: ein stummes Geraet weiter anzufragen
+        # bringt nichts.
+        if self._skip_query_once:
+            return True
         if not self._regulation_active():
             return False
         ctrl = self.states[GRP_ENERGY_CONTROL]
@@ -2356,9 +2394,12 @@ class Bridge:
         params: dict[str, Any] | None = None,
         *,
         with_instance: bool = True,
+        timeout: float | None = None,
     ) -> dict[str, Any] | None:
         try:
-            result = self.udp.request(method, params, with_instance=with_instance)
+            result = self.udp.request(
+                method, params, with_instance=with_instance, timeout=timeout
+            )
         except ApiError as err:
             # Das Geraet hat geantwortet, nur inhaltlich ablehnend - das ist
             # kein Grund, die Init-Sequenz abzubrechen.

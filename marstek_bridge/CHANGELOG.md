@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.9 - 2026-10-06
+
+- **Fix:** Lief die Abfrage vor dem Regeltakt in den Timeout, kam das Kommando
+  entsprechend zu spaet. Die Reserve stuetzt sich seit 0.3.6 auf die gemessene
+  Dauer von rund einer Sekunde; ein Timeout dauert aber drei. Bei `cd_time` 11
+  und Takt 10 wurden daraus 13 Sekunden zwischen zwei Kommandos - zwei ueber
+  der Frist.
+- Die Vorab-Abfrage bekommt jetzt ein Zeitbudget: nur die Zeit bis zum Takt,
+  hoechstens `request_timeout`. Der UDP-Client nimmt dafuer einen Timeout je
+  Anfrage entgegen. Der Takt wird damit auch bei ausbleibender Antwort
+  eingehalten.
+
+## 0.3.8 - 2026-10-05
+
+- Nach einem fehlgeschlagenen Request ruhen jetzt auch `Bat.GetStatus`,
+  `PV.GetStatus` und `EM.GetStatus` bis zum naechsten Regeltakt. Bisher galt
+  die Ruhe nur fuer den Regelpfad - eine faellige Nebenabfrage konnte also
+  unmittelbar nach einem Timeout losgehen, und zwar besonders wahrscheinlich,
+  weil der Fehlschlag das freie Fenster neu beginnen laesst.
+- Die Regel gilt auch ohne aktive Selbstregelung: ein stummes Geraet weiter
+  anzufragen bringt nichts. Die Ueberfaelligkeitsregel bleibt unberuehrt, damit
+  keine Abfrage dauerhaft ausfaellt.
+
+## 0.3.7 - 2026-10-05
+
+- **Fix:** Der Regeltakt wurde ab der Quittung gemessen statt ab dem Absenden.
+  Die Antwortzeit des Geraets kam dadurch bei jedem Durchgang auf den Takt
+  obendrauf - aus 10 eingestellten Sekunden wurden 11, bei langsamer Antwort
+  auch 12. Fuer den Countdown des Geraets zaehlt der Moment, in dem das
+  Kommando ankommt; genau dann wird jetzt gestempelt.
+- Der Takt ist damit unabhaengig davon, wie schnell das Geraet gerade
+  antwortet.
+
+## 0.3.6 - 2026-10-05
+
+- **Fix:** Der Regeltakt war systematisch kuerzer als eingestellt. Die Reserve
+  fuer die Vorab-Abfrage rechnete mit dem schlimmsten Fall
+  (`request_delay` + `request_timeout`), tatsaechlich ist die Abfrage aber
+  meist nach gut einer Sekunde durch. Bei einem eingestellten Takt von 15
+  Sekunden, 1 s Pause und 3 s Timeout kamen die Kommandos dadurch alle 12
+  Sekunden - ein Viertel mehr als gewollt.
+- Die Reserve richtet sich jetzt nach der gemessenen Dauer der Abfrage, die
+  gleitend mitgefuehrt wird. Der Takt trifft damit den eingestellten Wert auf
+  etwa eine Zehntelsekunde genau.
+
 ## 0.3.5 - 2026-10-05
 
 - `passive_cd_time_max` von 300 auf **30 Sekunden** gesenkt. Werte darueber
