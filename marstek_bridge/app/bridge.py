@@ -944,6 +944,11 @@ class Bridge:
             mode,
             config,
         )
+        # Fuer den Countdown des Geraets zaehlt der Moment, in dem das Kommando
+        # bei ihm ankommt - nicht der, in dem die Quittung zurueck ist. Wuerde
+        # erst danach gestempelt, kaeme die Antwortzeit bei jedem Durchgang auf
+        # den Takt obendrauf: aus 10 Sekunden wuerden 11.
+        gesendet = time.monotonic()
         result = self._query(M_ES_SET_MODE, {"config": config})
         if result is None:
             return False
@@ -952,7 +957,7 @@ class Bridge:
             M_ES_SET_MODE, result, logging.INFO if refresh else CALC_LEVEL
         )
         self._publish_state(GRP_ENERGY_CONTROL)
-        self._last_passive_push = time.monotonic()
+        self._last_passive_push = gesendet
         # Nach einem manuellen Moduswechsel den neuen Zustand nachlesen, damit
         # die Gruppe *Marstek Energy Mode* stimmt. Steht poll_interval_mode auf
         # 0, will der Benutzer diese Gruppe gar nicht aktuell halten - dann
@@ -2265,7 +2270,15 @@ class Bridge:
         Mittelungsfensters. Danach sammelt die Bridge die Messwerte fuer den
         naechsten Takt und fragt kurz davor selbst den Geraetestatus ab - dort
         hat nichts anderes Platz.
+
+        Nach einem fehlgeschlagenen Request ruht ausserdem alles bis zum
+        naechsten Regeltakt. Das Geraet antwortet dann ohnehin gerade nicht,
+        und eine faellige Nebenabfrage traefe genau den unguenstigsten Moment.
         """
+        # Gilt auch ohne Selbstregelung: ein stummes Geraet weiter anzufragen
+        # bringt nichts.
+        if self._skip_query_once:
+            return True
         if not self._regulation_active():
             return False
         ctrl = self.states[GRP_ENERGY_CONTROL]

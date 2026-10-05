@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.8 - 2026-10-05
+
+- Nach einem fehlgeschlagenen Request ruhen jetzt auch `Bat.GetStatus`,
+  `PV.GetStatus` und `EM.GetStatus` bis zum naechsten Regeltakt. Bisher galt
+  die Ruhe nur fuer den Regelpfad - eine faellige Nebenabfrage konnte also
+  unmittelbar nach einem Timeout losgehen, und zwar besonders wahrscheinlich,
+  weil der Fehlschlag das freie Fenster neu beginnen laesst.
+- Die Regel gilt auch ohne aktive Selbstregelung: ein stummes Geraet weiter
+  anzufragen bringt nichts. Die Ueberfaelligkeitsregel bleibt unberuehrt, damit
+  keine Abfrage dauerhaft ausfaellt.
+
+## 0.3.7 - 2026-10-05
+
+- **Fix:** Der Regeltakt wurde ab der Quittung gemessen statt ab dem Absenden.
+  Die Antwortzeit des Geraets kam dadurch bei jedem Durchgang auf den Takt
+  obendrauf - aus 10 eingestellten Sekunden wurden 11, bei langsamer Antwort
+  auch 12. Fuer den Countdown des Geraets zaehlt der Moment, in dem das
+  Kommando ankommt; genau dann wird jetzt gestempelt.
+- Der Takt ist damit unabhaengig davon, wie schnell das Geraet gerade
+  antwortet.
+
 ## 0.3.6 - 2026-10-05
 
 - **Fix:** Der Regeltakt war systematisch kuerzer als eingestellt. Die Reserve
