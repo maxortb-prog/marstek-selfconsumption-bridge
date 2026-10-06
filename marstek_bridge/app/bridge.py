@@ -138,6 +138,9 @@ class Bridge:
         self._skip_query_once = False
         # Gemessene Dauer der Vorab-Abfrage, gleitend gemittelt.
         self._query_duration: float | None = None
+        # Beginn der laufenden UDP-Anfrage - fuer die Zeitrechnung nach einem
+        # Fehlschlag, damit die Timeout-Dauer nicht auf den Takt kommt.
+        self._request_started = 0.0
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -1401,8 +1404,11 @@ class Bridge:
         interval = self._keepalive_interval()
         if interval <= 0:
             return
+        # Die Reserve deckt die Vorab-Abfrage ab. Entfaellt sie - weil die
+        # Regelung aus ist oder der letzte Request fehlschlug - gilt der volle
+        # Takt.
         reserve = 0.0
-        if self._regulation_active():
+        if self._regulation_active() and not self._skip_query_once:
             reserve = min(self._cycle_reserve(), max(0.0, interval - 1.0))
         if time.monotonic() - self._last_passive_push < interval - reserve:
             return
@@ -2396,6 +2402,7 @@ class Bridge:
         with_instance: bool = True,
         timeout: float | None = None,
     ) -> dict[str, Any] | None:
+        self._request_started = time.monotonic()
         try:
             result = self.udp.request(
                 method, params, with_instance=with_instance, timeout=timeout
@@ -2470,7 +2477,12 @@ class Bridge:
         # Der fehlgeschlagene Versuch zaehlt als Takt. Ohne das bliebe der
         # Takt faellig und die naechste Anfrage ginge sofort raus - auf ein
         # Geraet, das eben nicht geantwortet hat, im Abstand von Millisekunden.
-        self._last_passive_push = time.monotonic()
+        #
+        # Gestempelt wird der Beginn der Anfrage, nicht das Erkennen des
+        # Fehlers: Dazwischen liegt der volle Timeout, und der gehoert nicht
+        # zum Takt. Sonst kaemen bei 3 Sekunden Timeout und 10 Sekunden Takt
+        # 13 Sekunden zwischen zwei Kommandos heraus.
+        self._last_passive_push = self._request_started or time.monotonic()
         self._publish_state(GRP_SYSTEM)
 
     def _set_communication(self, ok: bool, reason: str | None = None) -> None:

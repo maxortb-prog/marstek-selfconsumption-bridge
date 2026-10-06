@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.10 - 2026-10-06
+
+- **Fix:** Nach einem fehlgeschlagenen Kommando wurde der naechste Takt ab dem
+  Erkennen des Timeouts gerechnet statt ab dem Sendeversuch. Die Timeout-Dauer
+  kam dadurch auf den Takt obendrauf - bei 3 Sekunden Timeout und 10 Sekunden
+  Takt waren es 13 Sekunden zwischen zwei Kommandos, bei einer `cd_time` von 11
+  also zwei zu viel. Dasselbe Muster wie in 0.3.7, nur auf dem Fehlerpfad.
+- Im Uebersprung-Pfad nach einem Fehlschlag entfaellt jetzt die Reserve fuer die
+  Vorab-Abfrage, denn dort laeuft keine. Der Takt wird damit in allen drei
+  Faellen - erfolgreich, Timeout, wechselnd - exakt eingehalten.
+
 ## 0.3.9 - 2026-10-06
 
 - **Fix:** Lief die Abfrage vor dem Regeltakt in den Timeout, kam das Kommando

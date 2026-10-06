@@ -295,12 +295,20 @@ Gerät schwertut, halbiert das die Zahl der Anfragen.
 **Ein Fehlschlag zählt als Takt.** Ohne das bliebe der Takt fällig, und die
 nächste Anfrage ginge im Abstand von Millisekunden auf ein Gerät, das eben
 nicht geantwortet hat. Nach einem Timeout wartet die Bridge daher den regulären
-Takt ab:
+Takt ab - gerechnet ab dem **Beginn** der gescheiterten Anfrage, nicht ab dem
+Erkennen des Fehlers. Dazwischen liegt der volle Timeout, und der gehört nicht
+zum Takt:
 
-```
-Takt 10 s, jedes Kommando laeuft in den 3-Sekunden-Timeout
-Versuche bei t = 9, 18, 27, 36, 45 s
-```
+| ES.SetMode | Abstand der Sendeversuche |
+|---|---|
+| immer erfolgreich | 10,0 s |
+| immer Timeout | 10,0 s |
+| jeder zweite Timeout | 10,0 s |
+
+Vor dieser Korrektur kamen bei 3 Sekunden Timeout 13 Sekunden zwischen zwei
+Kommandos heraus - bei einer `cd_time` von 11 Sekunden genug, um das Gerät aus
+dem Passive-Modus zu werfen. Im Übersprung-Pfad entfällt zudem die Reserve für
+die Vorab-Abfrage, denn dort läuft gar keine.
 
 Das hat eine Kehrseite, die man kennen muss: Der Abstand zum letzten
 **erfolgreichen** Kommando wächst mit jedem Fehlschlag um einen vollen Takt.
