@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 - 2026-10-06
+
+**Der Zeitplan eines Regeltakts wurde umgestellt.** Das Kommando steht jetzt am
+Anfang, die Statusabfragen folgen danach - bisher lag `ES.GetStatus`
+unmittelbar davor.
+
+- `ES.GetStatus` laeuft nach dem Kommando statt davor. Damit kann keine Abfrage
+  mehr das faellige Kommando verzoegern, und das Geraet bekommt seine Anfragen
+  gebuendelt kurz nach dem Kommando statt kurz davor.
+- Die uebrigen Abfragen reihen sich dahinter ein: hoechstens **eine** je Takt,
+  die restlichen ruecken nach. Der zyklische Abfrageplan haelt sich bei
+  laufender Selbstregelung vollstaendig heraus.
+- Die letzten `self_regulation_average_window` Sekunden vor dem Kommando
+  bleiben frei von Verkehr. Noch wartende Abfragen ruecken in den naechsten
+  Takt.
+- Die Ausfallerkennung vergleicht jetzt gegen den **vorherigen** Sollwert: Die
+  Abfrage trifft das Geraet in seiner Totzeit, es liefert also noch nach der
+  alten Vorgabe.
+- Reserve und Zeitbudget fuer die Vorab-Abfrage entfallen ersatzlos - es gibt
+  keine Vorab-Abfrage mehr.
+
 ## 0.3.10 - 2026-10-06
 
 - **Fix:** Nach einem fehlgeschlagenen Kommando wurde der naechste Takt ab dem

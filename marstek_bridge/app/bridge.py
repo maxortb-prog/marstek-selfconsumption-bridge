@@ -141,6 +141,10 @@ class Bridge:
         # Beginn der laufenden UDP-Anfrage - fuer die Zeitrechnung nach einem
         # Fehlschlag, damit die Timeout-Dauer nicht auf den Takt kommt.
         self._request_started = 0.0
+        # Nach dem Kommando eingereihte Statusabfragen.
+        self._post_queue: list[tuple[str, Callable[[], bool]]] = []
+        # Sollwert vor dem laufenden Kommando - Bezug fuer die Ausfallerkennung.
+        self._previous_setpoint: int | None = None
         # Einspeise-Korrektur hoechstens einmal je Takt.
         self._export_done = False
         self._reaction_failures = 0
@@ -1391,7 +1395,14 @@ class Bridge:
         return max(0.5, self._query_duration)
 
     def _passive_cycle(self) -> None:
-        """Einmal je Takt: regeln und senden, oder nur nachsenden."""
+        """Einmal je Takt das Kommando senden.
+
+        Das Kommando steht am Anfang des Takts, nicht am Ende. Danach bleibt
+        Zeit fuer die Statusabfragen, und die letzten Sekunden vor dem naechsten
+        Kommando sind frei von Verkehr - dort sammelt die Bridge nur noch die
+        Messwerte fuer den Mittelwert. Das Geraet bekommt seine Anfragen damit
+        gebuendelt kurz nach dem Kommando statt kurz davor.
+        """
         if not self._initialized:
             return
         ctrl = self.states[GRP_ENERGY_CONTROL]
@@ -1404,13 +1415,7 @@ class Bridge:
         interval = self._keepalive_interval()
         if interval <= 0:
             return
-        # Die Reserve deckt die Vorab-Abfrage ab. Entfaellt sie - weil die
-        # Regelung aus ist oder der letzte Request fehlschlug - gilt der volle
-        # Takt.
-        reserve = 0.0
-        if self._regulation_active() and not self._skip_query_once:
-            reserve = min(self._cycle_reserve(), max(0.0, interval - 1.0))
-        if time.monotonic() - self._last_passive_push < interval - reserve:
+        if time.monotonic() - self._last_passive_push < interval:
             return
 
         if not self._regulation_active():
@@ -1420,43 +1425,76 @@ class Bridge:
                 self._effective_passive_power(),
                 interval,
             )
-            self._apply_mode(refresh=False)
+            if self._apply_mode(refresh=False):
+                self._queue_status_queries()
             return
 
-        # Nach einem Fehlschlag einen Takt lang nur senden. Die Abfrage wuerde
-        # das Kommando um ihre Antwortzeit verzoegern - und genau die fehlt,
-        # wenn das Geraet ohnehin schon nicht antwortet.
+        # Der Sollwert vor diesem Kommando ist der Bezug fuer die
+        # Ausfallerkennung: Die Abfrage gleich danach trifft das Geraet noch in
+        # seiner Totzeit, es liefert also nach der alten Vorgabe.
+        self._previous_setpoint = int(ctrl.get("regulation_output") or 0)
+        self._regulate()
+        # Alle Pfade in _regulate senden ein Kommando; schlug es fehl, leert
+        # _queue_status_queries die Warteschlange von selbst.
+        self._queue_status_queries()
+
+    def _queue_status_queries(self) -> None:
+        """Nach dem Kommando die faelligen Abfragen einreihen.
+
+        Vorrang hat ``ES.GetStatus`` - daran haengen die Ausfallerkennung und
+        der PV-Zaehler. Dahinter kommt hoechstens eine weitere faellige
+        Abfrage; die uebrigen ruecken in den naechsten Takten nach. So liegt
+        zwischen zwei Kommandos nie mehr als eine Zusatzanfrage.
+        """
         if self._skip_query_once:
+            # Letzter Request fehlgeschlagen - diesen Takt nur das Kommando.
             self._skip_query_once = False
-            _LOGGER.log(
-                CALC_LEVEL,
-                "Letzter Request fehlgeschlagen - Abfrage uebersprungen, "
-                "Sollwert %s W wird direkt gesendet",
-                self._effective_passive_power(),
-            )
-            self._apply_mode(refresh=False)
+            self._post_queue = []
             return
 
-        # Unmittelbar vor dem Kommando den Zustand des Geraets lesen. Zu diesem
-        # Zeitpunkt ist es auf die aktuelle Vorgabe eingeschwungen, die Meldung
-        # gehoert also zur richtigen Vorgabe - anders als eine Abfrage kurz
-        # nach dem Kommando, die noch den alten Zustand zeigt.
-        # Die Abfrage darf das faellige Kommando nicht verzoegern. Sie bekommt
-        # deshalb nur die Zeit, die bis zum Takt bleibt - laeuft sie in den
-        # vollen request_timeout, kaeme das Kommando sonst mehrere Sekunden zu
-        # spaet und das Geraet faellt aus dem Passive-Modus.
+        self._post_queue = [("es_status", self._step_es_status)]
+        if not self.s.poll_enabled:
+            return
+        jetzt = time.monotonic()
+        for name, intervall, schritt in self._poll_jobs():
+            if name == "es_status" or intervall <= 0:
+                continue
+            if jetzt - self._poll_last.get(name, 0.0) >= intervall:
+                self._post_queue.append((name, schritt))
+                break
+
+    def _drain_status_queries(self) -> None:
+        """Eine eingereihte Abfrage ausfuehren, falls noch Zeit bleibt.
+
+        Die letzten ``average_window`` Sekunden vor dem naechsten Kommando
+        bleiben frei: Dort sammelt die Bridge die Messwerte, auf die sie gleich
+        rechnet, und das Geraet soll in Ruhe liefern.
+        """
+        if not self._post_queue or not self._initialized:
+            return
+        interval = self._keepalive_interval()
+        seit = time.monotonic() - self._last_passive_push
+        if interval > 0 and seit >= interval - self.s.self_regulation_average_window:
+            uebrig = [name for name, _ in self._post_queue]
+            self._post_queue = []
+            self._log_quiet(
+                "Abfragen %s verschoben - das Mittelungsfenster beginnt",
+                ", ".join(uebrig),
+            )
+            return
+
+        name, schritt = self._post_queue.pop(0)
         begonnen = time.monotonic()
-        budget = interval - (begonnen - self._last_passive_push)
-        budget = max(0.3, min(self.s.request_timeout, budget))
-        erfolg = self._step_es_status(timeout=budget)
+        erfolg = schritt()
+        self._poll_last[name] = time.monotonic()
+        if name != "es_status":
+            return
+
         self._note_query_duration(time.monotonic() - begonnen)
         if not erfolg:
-            _LOGGER.warning(
-                "ES.GetStatus vor dem Regeltakt fehlgeschlagen - keine "
-                "Korrektur, Sollwert %s W wird erneut gesendet",
-                self._effective_passive_power(),
-            )
-            self._apply_mode(refresh=False)
+            # Ohne Statusmeldung keine Ausfallerkennung in diesem Takt. Die
+            # Regelung laeuft weiter, sie braucht nur die Messklemme.
+            self._post_queue = []
             return
 
         # Erst den Verdacht des letzten Takts entscheiden, dann neu pruefen.
@@ -1464,13 +1502,10 @@ class Bridge:
         fehlend = self._check_device_output()
         if fehlend > 0:
             self._note_output_suspect(fehlend)
+            # Die Messwerte dieses Fensters sind verfaelscht.
             self._input_samples.clear()
             self._cycle_mean = None
             self._cycle_delta = 0
-            self._apply_mode(refresh=False)
-            return
-
-        self._regulate()
 
     def _check_device_output(self) -> float:
         """Vergleicht die gemeldete Ausgangsleistung mit der Erwartung.
@@ -1480,6 +1515,10 @@ class Bridge:
         (gemessen rund 15 W bei 130 W wie bei 300 W Vorgabe, also absolut und
         nicht proportional). Dieser Offset wird als gleitender Mittelwert
         gelernt, beginnend beim ersten Messwert.
+
+        Verglichen wird gegen den **vorherigen** Sollwert: Die Abfrage laeuft
+        kurz nach dem Kommando, das Geraet ist dann noch in seiner Totzeit und
+        liefert nach der alten Vorgabe.
 
         Liegt die Meldung deutlich unter ``Vorgabe - Offset``, hat das Geraet
         seinen Ausgang eigenmaechtig reduziert. Der Anstieg an der
@@ -1492,7 +1531,9 @@ class Bridge:
         if schwelle <= 0 or self._last_ongrid is None:
             return 0.0
         gemeldet = self._last_ongrid[0]
-        soll = int(self.states[GRP_ENERGY_CONTROL].get("regulation_output") or 0)
+        soll = self._previous_setpoint
+        if soll is None:
+            soll = int(self.states[GRP_ENERGY_CONTROL].get("regulation_output") or 0)
         if soll <= 0:
             return 0.0
 
@@ -2272,37 +2313,26 @@ class Bridge:
         self._check_stuck_recovery()
         self._check_cycle_timing()
         self._passive_cycle()
+        self._drain_status_queries()
         self._check_regulation_timeout()
         self._sleep(0.2)
 
     def _regulation_busy(self) -> bool:
-        """True, wenn eine Statusabfrage gerade stoeren wuerde.
+        """True, wenn der zyklische Abfrageplan ruhen soll.
 
-        Frei ist das Fenster zwischen dem Kommando und dem Beginn des
-        Mittelungsfensters. Danach sammelt die Bridge die Messwerte fuer den
-        naechsten Takt und fragt kurz davor selbst den Geraetestatus ab - dort
-        hat nichts anderes Platz.
+        Laeuft die Selbstregelung im Passive-Modus, werden die Abfragen nicht
+        mehr nach eigenem Zeitplan gestartet, sondern nach jedem Kommando
+        eingereiht - siehe ``_queue_status_queries``. Der zyklische Plan haelt
+        sich dann vollstaendig heraus, damit nichts dazwischenfunkt.
 
-        Nach einem fehlgeschlagenen Request ruht ausserdem alles bis zum
-        naechsten Regeltakt. Das Geraet antwortet dann ohnehin gerade nicht,
-        und eine faellige Nebenabfrage traefe genau den unguenstigsten Moment.
+        Nach einem fehlgeschlagenen Request ruht ohnehin alles bis zum
+        naechsten Takt; das Geraet antwortet dann gerade nicht.
         """
-        # Gilt auch ohne Selbstregelung: ein stummes Geraet weiter anzufragen
-        # bringt nichts.
         if self._skip_query_once:
             return True
         if not self._regulation_active():
             return False
-        ctrl = self.states[GRP_ENERGY_CONTROL]
-        if ctrl.get("applied_mode") != MODE_PASSIVE:
-            return False
-        interval = self._keepalive_interval()
-        if interval <= 0:
-            return False
-        frei_bis = (
-            interval - self.s.self_regulation_average_window - self._cycle_reserve()
-        )
-        return time.monotonic() - self._last_passive_push >= frei_bis
+        return self.states[GRP_ENERGY_CONTROL].get("applied_mode") == MODE_PASSIVE
 
     def _poll_jobs(self) -> list[tuple[str, int, Callable[[], bool]]]:
         """Die einzeln taktbaren Abfragen samt ihrem Intervall.

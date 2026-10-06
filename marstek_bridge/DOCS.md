@@ -307,8 +307,7 @@ zum Takt:
 
 Vor dieser Korrektur kamen bei 3 Sekunden Timeout 13 Sekunden zwischen zwei
 Kommandos heraus - bei einer `cd_time` von 11 Sekunden genug, um das Gerät aus
-dem Passive-Modus zu werfen. Im Übersprung-Pfad entfällt zudem die Reserve für
-die Vorab-Abfrage, denn dort läuft gar keine.
+dem Passive-Modus zu werfen.
 
 Das hat eine Kehrseite, die man kennen muss: Der Abstand zum letzten
 **erfolgreichen** Kommando wächst mit jedem Fehlschlag um einen vollen Takt.
@@ -321,107 +320,56 @@ Wiederholversuch den verlorenen Frame ab, ohne dass ein ganzer Takt vergeht.
 
 ```
 t=0      Kommando raus, Countdown des Geräts startet neu
-         ├─ freies Fenster: battery, pv und andere Abfragen
-t=8      Mittelungsfenster beginnt, Messwerte werden gesammelt
-t=13     ES.GetStatus vor dem Takt (Reserve = request_delay + request_timeout)
-t=15     Mittelwert bilden, rechnen, Kommando raus
+t=1      ES.GetStatus - Ausfallerkennung und PV-Zähler
+t=2      eine weitere fällige Abfrage, falls eine ansteht
+t=5      Mittelungsfenster: nur noch Messwerte sammeln, kein Verkehr
+t=10     Mittelwert bilden, rechnen, Kommando raus
 ```
 
-Beispiel für `passive_keepalive_interval: 15` und
+Beispiel für `passive_keepalive_interval: 10` und
 `self_regulation_average_window: 5`.
 
-**Das Kommando geht pünktlich zum Takt raus.** Die Abfrage davor braucht Zeit,
-und der Takt startet um genau diese Reserve früher. Ohne das würde sich jeder
-Takt um die Dauer der Abfrage nach hinten schieben und die Marge zur `cd_time`
-schrumpfen.
+**Das Kommando steht am Anfang des Takts.** Es geht als Erstes raus, und der
+Takt wird ab dem Absenden gemessen - nicht ab der Quittung. Damit hängt er
+weder an der Antwortzeit des Geräts noch an der Dauer irgendeiner Abfrage.
 
-Gerechnet wird mit der **gemessenen** Dauer, gleitend mitgeführt - nicht mit
-`request_timeout`. Der schlimmste Fall als Ansatz ließe das Kommando jedes Mal
-zu früh rausgehen:
-
-| eingestellter Takt | echte Antwortzeit | Abstand der Kommandos |
-|---|---|---|
-| 15 s | 1,1 s | 15,0 s |
-| 15 s | 0,4 s | 14,9 s |
-| 15 s | 2,5 s | 15,0 s |
-
-Mit dem Timeout als Ansatz (1 s Pause + 3 s Timeout) wären daraus bei 1,1 s
-tatsächlicher Antwortzeit durchgehend 12,1 Sekunden geworden - also ein Viertel
-mehr Kommandos als eingestellt.
-
-**Gemessen wird ab dem Absenden**, nicht ab der Quittung. Für den Countdown des
-Geräts zählt der Moment, in dem das Kommando ankommt; würde erst nach der
-Antwort gestempelt, käme deren Laufzeit bei jedem Durchgang obendrauf:
-
-| Antwortzeit auf `ES.SetMode` | Abstand der Sendezeitpunkte |
-|---|---|
-| 0,5 s | 10,0 s |
-| 1,0 s | 10,0 s |
-| 2,0 s | 10,0 s |
-
-Vorher waren es 10,5 / 11,0 / 12,0 Sekunden - der Takt hing also an der
-Antwortzeit des Geräts, die selbst schwankt.
-
-**Die Abfrage bekommt ein Zeitbudget**, damit sie das fällige Kommando nicht
-verzögern kann: Sie erhält nur die Zeit, die bis zum Takt bleibt, höchstens
-aber `request_timeout`. Ohne diese Grenze würde eine Abfrage, die in den
-Timeout läuft, das Kommando um die Differenz zur üblichen Antwortzeit nach
-hinten schieben - bei 3 Sekunden Timeout und 1 Sekunde üblicher Antwortzeit
-also um zwei Sekunden. Bei einer `cd_time` von 11 Sekunden und einem Takt von
-10 reicht das, um das Gerät aus dem Passive-Modus zu werfen.
-
-| Abfrage braucht | Abstand der Kommandos | Budget der Abfrage |
-|---|---|---|
-| 0,8 s | 10,0 s | 0,8 s |
-| Timeout | 10,0 s | 3,0 s |
-
-Im zweiten Fall passt sich die Reserve an: Weil die gemessene Dauer auf 3
-Sekunden steigt, startet der Takt entsprechend früher - das Kommando bleibt
-pünktlich, die Abfrage bekommt trotzdem ihre volle Zeit.
-
-**Andere Abfragen** laufen im freien Fenster zwischen Kommando und
-Mittelungsfenster. Eine Abfrage, die das Doppelte ihres Intervalls überfällig
-ist, läuft trotzdem - sie kann nicht verhungern.
-
-| Takt | Fenster offen bis | nutzbar nach dem Kommando |
-|---|---|---|
-| 10 s | 3,9 s | 2,9 s |
-| 12 s | 5,9 s | 4,9 s |
-| 15 s | 8,9 s | 7,9 s |
-| 20 s | 13,9 s | 12,9 s |
-
-Das wirkt bei kurzem Takt knapp, reicht aber bei weitem: Eine Abfrage braucht
-rund zwei Sekunden, und selbst bei 10 Sekunden Takt stehen 360 Fenster je
-Stunde bereit. `Bat.GetStatus` mit 600 Sekunden Intervall wird sechsmal je
-Stunde fällig - auf 360 Gelegenheiten. Erst wenn mehrere Abfragen im
-Sekundenbereich laufen sollen, wird der Takt zur Begrenzung.
-
-**Nach einem fehlgeschlagenen Request ruhen auch die Nebenabfragen** bis zum
-nächsten Regeltakt. Das Gerät antwortet dann ohnehin gerade nicht, und eine
-fällige Abfrage träfe genau den ungünstigsten Moment - zumal der Fehlschlag das
-freie Fenster neu beginnen lässt.
-
-**Die `cd_time` muss zum Takt passen.** Das Gerät fällt aus dem Passive-Modus,
-wenn länger als `cd_time` kein Kommando kommt. Liegt der Takt dicht darunter,
-reicht ein einzelner verlorener UDP-Frame - der nächste Versuch braucht ein
-paar Sekunden, und die Frist ist abgelaufen:
+**Die Abfragen folgen gebündelt danach.** Vorrang hat `ES.GetStatus`, denn
+daran hängen die Ausfallerkennung und der PV-Zähler. Dahinter kommt höchstens
+**eine** weitere fällige Abfrage; die übrigen rücken in den nächsten Takten
+nach. Zwischen zwei Kommandos liegt also nie mehr als eine Zusatzanfrage:
 
 ```
-WARNING  Knappes Timing: Regeltakt 10s bei cd_time 10s - nur 0s Reserve.
-         Ein einzelnes verlorenes Kommando wirft das Geraet aus dem
-         Passive-Modus. Empfehlung: cd_time auf mindestens 20s, oder
-         request_retries auf 1
+Takt 0:  t=10.0s  ES.SetMode
+         t=11.0s    ES.GetStatus
+Takt 2:  t=30.0s  ES.SetMode
+         t=31.0s    ES.GetStatus
+         t=32.1s    Bat.GetStatus
+Takt 3:  t=40.0s  ES.SetMode
+         t=41.0s    ES.GetStatus
+         t=42.1s    PV.GetStatus
 ```
 
-Die Praxis zeigt allerdings: **Am stabilsten läuft es, wenn der Takt der
-`cd_time` entspricht.** Ein verlorenes Kommando führt dann zwar zu einer kurzen
-Reduktion, die der nächste Takt aber wieder ausgleicht. Die Bridge vermerkt das
-nur auf `calc`. Eine echte Warnung kommt erst, wenn der Takt **länger** ist als
-die `cd_time` - dann läuft der Countdown in jedem Durchgang ab. Geprüft wird gegen den **tatsächlich eingestellten** Wert der Entity
-*Passive cd time*, nicht gegen `passive_cd_time_default` - der kann durch
-`restore_state` oder eine Änderung zur Laufzeit davon abweichen. Deshalb läuft
-die Prüfung beim Start, bei jeder Änderung der `cd_time` und darüber hinaus
-alle zehn Minuten.
+**Die letzten Sekunden bleiben frei.** Sobald das Mittelungsfenster beginnt,
+wird nichts mehr gesendet. Dort sammelt die Bridge die Messwerte, auf die sie
+gleich rechnet, und das Gerät soll in Ruhe liefern. Noch wartende Abfragen
+rücken in den nächsten Takt.
+
+**Nach einem fehlgeschlagenen Request** entfallen die Abfragen dieses Takts
+ganz - das Gerät antwortet dann ohnehin gerade nicht. Gerechnet wird der
+nächste Takt ab dem Beginn der gescheiterten Anfrage, nicht ab dem Erkennen des
+Fehlers; dazwischen liegt der volle Timeout, und der gehört nicht zum Takt.
+
+**Der Bezug der Ausfallerkennung ist der vorherige Sollwert.** Die Abfrage
+läuft kurz nach dem Kommando, das Gerät ist dann noch in seiner Totzeit von
+rund zehn Sekunden und liefert nach der alten Vorgabe. Verglichen wird deshalb
+gegen diese.
+
+Dabei bleibt eine Unschärfe: Bei einem Takt von 10 Sekunden und etwa 20
+Sekunden Einschwingzeit ist das Gerät nie vollständig auf einem Sollwert
+angekommen, die Meldung liegt also immer etwas unter der Erwartung. Solange die
+Korrekturen klein sind, fällt das in den gelernten Offset. Nach einer großen
+Korrektur kann ein Fehlverdacht entstehen, den die Gegenprobe über die
+Messklemme dann als Messfehler einordnet.
 
 **Die Verstärkung muss zum Takt passen.** Das Gerät braucht rund 20 Sekunden
 bis zum Einschwingen. Ist der Takt kürzer, wird mehrfach auf denselben Fehler
